@@ -58,8 +58,10 @@ _SUBJECT_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("Science", re.compile(r"scien|\bevs\b", re.IGNORECASE)),
 ]
 
-_ICSE_RE = re.compile(r"\bicse\b|\bcisce\b|\bselina\b", re.IGNORECASE)
-_CBSE_RE = re.compile(r"\bcbse\b|\bncert\b", re.IGNORECASE)
+# Lookarounds instead of \b: real folder names glue board tags to underscores
+# ("ICSE_VP and Pathshala", "CBSE_NSAT"), and "_" is a \w char so \b fails there.
+_ICSE_RE = re.compile(r"(?<![a-z])(?:icse|cisce|selina)(?![a-z])", re.IGNORECASE)
+_CBSE_RE = re.compile(r"(?<![a-z])(?:cbse|ncert)(?![a-z])", re.IGNORECASE)
 _STATE_RE = re.compile(r"state\s*board", re.IGNORECASE)
 
 
@@ -83,6 +85,16 @@ def _subject_from_segment(segment: str) -> str | None:
     return None
 
 
+def _board_from_segment(segment: str) -> str | None:
+    if _ICSE_RE.search(segment):
+        return "ICSE"
+    if _CBSE_RE.search(segment):
+        return "CBSE"
+    if _STATE_RE.search(segment):
+        return "State Board"
+    return None
+
+
 def classify_path(rel_path: str | Path) -> tuple[str | None, str | None, str | None]:
     """(board, class_level, subject) read from a file's folder path.
 
@@ -96,15 +108,14 @@ def classify_path(rel_path: str | Path) -> tuple[str | None, str | None, str | N
     """
     text = str(rel_path).replace("\\", "/")
     segments = [s for s in text.split("/") if s]
-    joined = " / ".join(segments)
 
+    # Deepest board tag wins: "NEW NCERT/ICSE_VP and Pathshala/Class 9/..." is
+    # the ICSE track's material even though an outer wrapper says NCERT.
     board: str | None = None
-    if _ICSE_RE.search(joined):
-        board = "ICSE"
-    elif _CBSE_RE.search(joined):
-        board = "CBSE"
-    elif _STATE_RE.search(joined):
-        board = "State Board"
+    for seg in reversed(segments):
+        board = _board_from_segment(seg)
+        if board:
+            break
 
     class_level: str | None = None
     for seg in reversed(segments):  # deepest (most specific) segment first

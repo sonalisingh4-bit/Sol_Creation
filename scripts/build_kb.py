@@ -31,6 +31,12 @@ import shutil
 import sys
 from pathlib import Path
 
+# Book/chapter names contain characters (thin spaces, dashes) that Windows'
+# default cp1252 console cannot print; never let a progress line kill a build.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
