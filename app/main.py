@@ -50,9 +50,16 @@ def index(request: Request):
 
 # --- knowledge base -------------------------------------------------------
 @app.post("/sources/upload", response_class=HTMLResponse)
-async def upload_sources(request: Request, files: list[UploadFile]):
+async def upload_sources(
+    request: Request,
+    files: list[UploadFile],
+    subject: str = Form("General"),
+    class_level: str = Form(""),
+):
     errors: list[str] = []
     added = 0
+    subject = subject if subject in config.SUBJECTS else "General"
+    class_level = class_level.strip() or None
     for upload in files:
         name = upload.filename or "file"
         if not extract.is_supported(name):
@@ -60,7 +67,12 @@ async def upload_sources(request: Request, files: list[UploadFile]):
             continue
         saved = _save_upload(upload, config.UPLOAD_DIR)
         try:
-            ingest.ingest_file(saved, original_name=name)
+            ingest.ingest_file(
+                saved,
+                original_name=name,
+                subject=subject,
+                class_level=class_level,
+            )
             added += 1
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{name}: {exc}")

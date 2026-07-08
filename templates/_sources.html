@@ -20,7 +20,11 @@
   {% for s in sources %}
   <li>
     <div class="src-name">📘 {{ s.filename }}</div>
-    <div class="src-meta">{{ s.n_chunks }} chunks</div>
+    <div class="src-meta">
+      {{ s.n_chunks }} chunks
+      {% if s.subject %} Â· {{ s.subject }}{% endif %}
+      {% if s.class_level %} Â· {{ s.class_level }}{% endif %}
+    </div>
     <button class="btn link danger" title="Remove"
             hx-post="/sources/{{ s.source_id }}/delete" hx-target="#sources">✕</button>
   </li>

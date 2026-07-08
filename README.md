@@ -41,6 +41,28 @@ copy .env .env          # then edit .env and paste your key
 python main.py                  # http://127.0.0.1:8000
 ```
 
+## Preload the knowledge base
+
+Sources can be tagged by subject and class so generation retrieves only the
+relevant material. For the chapterwise book zip, run:
+
+```bash
+python scripts/import_books_zip.py "path/to/All Book Chapterwise.zip" --clear
+```
+
+The importer tags folders automatically:
+
+- `25-26 NCERT Physics/Grade 11/...` -> Physics, Class 11
+- `25-26 NCERT Chemistry/Grade 12/...` -> Chemistry, Class 12
+- `25-26 NCERT Botany` and `25-26 NCERT Zoology` -> Biology
+- `Maths 11` -> Mathematics, Class 11
+- `Maths 12 Part-1` and `Maths Part-2` -> Mathematics, Class 12
+
+At generation time, the Subject dropdown filters retrieval to that subject. If
+Class / Level is left blank, all files for that subject are used. If Class /
+Level is filled, that class is preferred and the app falls back to all files for
+the subject only when no class-specific chunks are found.
+
 ## Usage
 
 1. **Knowledge base** (left) — upload your sources and click *Add to knowledge base*.

@@ -71,6 +71,8 @@ class VectorStore:
         chunks: list[str],
         embeddings: list[list[float]],
         added_at: str,
+        subject: str | None = None,
+        class_level: str | None = None,
     ) -> None:
         if not chunks:
             return
@@ -82,12 +84,21 @@ class VectorStore:
                 self._vectors = np.vstack([self._vectors, new])
             for i, text in enumerate(chunks):
                 self._meta.append(
-                    {"source_id": source_id, "source": filename, "chunk_index": i, "text": text}
+                    {
+                        "source_id": source_id,
+                        "source": filename,
+                        "chunk_index": i,
+                        "text": text,
+                        "subject": subject or None,
+                        "class_level": class_level or None,
+                    }
                 )
             self._sources[source_id] = {
                 "filename": filename,
                 "n_chunks": len(chunks),
                 "added_at": added_at,
+                "subject": subject or None,
+                "class_level": class_level or None,
             }
             self._save()
 
@@ -112,21 +123,38 @@ class VectorStore:
             self._save()
 
     # --- queries ----------------------------------------------------------
-    def query(self, query_embedding: list[float], top_k: int) -> list[Hit]:
+    def query(
+        self,
+        query_embedding: list[float],
+        top_k: int,
+        *,
+        subject: str | None = None,
+        class_level: str | None = None,
+    ) -> list[Hit]:
         with self._lock:
             if self._vectors is None or not self._meta:
                 return []
+            candidates = [
+                i
+                for i, m in enumerate(self._meta)
+                if (not subject or m.get("subject") == subject)
+                and (not class_level or m.get("class_level") == class_level)
+            ]
+            if not candidates:
+                return []
             q = np.asarray(query_embedding, dtype=np.float32)
             q = q / (np.linalg.norm(q) or 1.0)
-            scores = self._vectors @ q
+            cand = np.asarray(candidates, dtype=np.int64)
+            scores = self._vectors[cand] @ q
             k = min(top_k, len(scores))
-            idx = np.argpartition(-scores, k - 1)[:k]
-            idx = idx[np.argsort(-scores[idx])]
+            local_idx = np.argpartition(-scores, k - 1)[:k]
+            local_idx = local_idx[np.argsort(-scores[local_idx])]
+            idx = cand[local_idx]
             return [
                 Hit(
                     text=self._meta[i]["text"],
                     source=self._meta[i]["source"],
-                    score=float(scores[i]),
+                    score=float(self._vectors[i] @ q),
                     metadata=self._meta[i],
                 )
                 for i in idx

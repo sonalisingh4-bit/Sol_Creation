@@ -376,12 +376,33 @@ class SolvedPaper:
     questions: list[SolvedQuestion]
 
 
-def _retrieve(query: str, top_k: int) -> tuple[str, list[str]]:
+def _retrieve(
+    query: str,
+    top_k: int,
+    *,
+    subject: str | None = None,
+    class_level: str | None = None,
+) -> tuple[str, list[str]]:
     store = get_store()
     if store.count() == 0:
         return "", []
     emb = gemini_client.embed_texts([query], is_query=True)[0]
-    hits: list[Hit] = store.query(emb, top_k)
+    hits: list[Hit] = store.query(
+        emb,
+        top_k,
+        subject=subject if subject and subject != "General" else None,
+        class_level=class_level.strip() if class_level and class_level.strip() else None,
+    )
+    # If a class-specific search finds nothing, fall back to all files for that
+    # subject. This matches the user-facing rule: class is optional/narrowing, not
+    # a reason to answer with no references when the subject has useful material.
+    if not hits and class_level:
+        hits = store.query(
+            emb,
+            top_k,
+            subject=subject if subject and subject != "General" else None,
+            class_level=None,
+        )
     context = "\n\n---\n\n".join(f"[Source: {h.source}]\n{h.text}" for h in hits)
     sources: list[str] = []
     for h in hits:
@@ -431,7 +452,12 @@ def _answer_unit(
     page: int | None = None,
 ) -> tuple[str, list[str]]:
     query = f"{parent_text + ' ' if parent_text else ''}{question_text}".strip()
-    context, sources = _retrieve(query, config.TOP_K)
+    context, sources = _retrieve(
+        query,
+        config.TOP_K,
+        subject=subject,
+        class_level=class_level,
+    )
     # Attach the page image when the question depends on a figure OR carries dense math
     # notation (so the model reads the real formula, not a garbled transcription).
     math_heavy = _is_math_heavy(question_text) or _is_math_heavy(parent_text)

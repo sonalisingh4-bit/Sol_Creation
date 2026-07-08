@@ -3,7 +3,11 @@
 __pycache__/
 *.pyc
 .env
-data/
+data/*
+!data/index/
+!data/index/vectors.npy
+!data/index/meta.json
+!data/index/sources.json
 *.docx
 *.pdf
 !sample/*.pdf

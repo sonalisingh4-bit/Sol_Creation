@@ -54,6 +54,22 @@
       <ul id="kb-selected" class="selected-list"></ul>
       <div id="kb-skipped" class="muted small"></div>
 
+      <div class="field-row">
+        <div class="field">
+          <label for="kb-subject">Source subject</label>
+          <select name="subject" id="kb-subject">
+            {% for value, label in subjects.items() %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="kb-class-level">Source class <span class="muted">(optional)</span></label>
+          <input type="text" name="class_level" id="kb-class-level" list="class-suggestions"
+                 placeholder="e.g. Class 11, Class 12"/>
+        </div>
+      </div>
+
       <button type="submit" class="btn" id="kb-upload" disabled>Add to knowledge base</button>
       <span id="kb-spin" class="htmx-indicator spinner-inline">Indexing…</span>
     </form>

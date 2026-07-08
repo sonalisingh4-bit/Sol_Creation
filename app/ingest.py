@@ -10,14 +10,30 @@ from .vectorstore import get_store
 
 
 class IngestResult:
-    def __init__(self, source_id: str, filename: str, n_chunks: int, chars: int):
+    def __init__(
+        self,
+        source_id: str,
+        filename: str,
+        n_chunks: int,
+        chars: int,
+        subject: str | None = None,
+        class_level: str | None = None,
+    ):
         self.source_id = source_id
         self.filename = filename
         self.n_chunks = n_chunks
         self.chars = chars
+        self.subject = subject
+        self.class_level = class_level
 
 
-def ingest_file(path: str | Path, original_name: str | None = None) -> IngestResult:
+def ingest_file(
+    path: str | Path,
+    original_name: str | None = None,
+    *,
+    subject: str | None = None,
+    class_level: str | None = None,
+) -> IngestResult:
     """Extract -> chunk -> embed -> store a single source file."""
     path = Path(path)
     filename = original_name or path.name
@@ -39,5 +55,7 @@ def ingest_file(path: str | Path, original_name: str | None = None) -> IngestRes
         chunks=chunks,
         embeddings=embeddings,
         added_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        subject=subject,
+        class_level=class_level,
     )
-    return IngestResult(source_id, filename, len(chunks), len(text))
+    return IngestResult(source_id, filename, len(chunks), len(text), subject, class_level)
