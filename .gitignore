@@ -3,11 +3,12 @@
 __pycache__/
 *.pyc
 .env
-data/*
-!data/index/
-!data/index/vectors.npy
-!data/index/meta.json
-!data/index/sources.json
+
+# All data stays out of git: uploads, outputs, the downloaded Drive sources
+# (data/kb_cache/) AND the built vector index. The index is published as a zip
+# on Google Drive (scripts/build_kb.py) and downloaded automatically instead.
+data/
+
 *.docx
 *.pdf
 !sample/*.pdf

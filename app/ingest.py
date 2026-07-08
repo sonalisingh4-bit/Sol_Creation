@@ -18,6 +18,7 @@ class IngestResult:
         chars: int,
         subject: str | None = None,
         class_level: str | None = None,
+        board: str | None = None,
     ):
         self.source_id = source_id
         self.filename = filename
@@ -25,6 +26,7 @@ class IngestResult:
         self.chars = chars
         self.subject = subject
         self.class_level = class_level
+        self.board = board
 
 
 def ingest_file(
@@ -33,6 +35,7 @@ def ingest_file(
     *,
     subject: str | None = None,
     class_level: str | None = None,
+    board: str | None = None,
 ) -> IngestResult:
     """Extract -> chunk -> embed -> store a single source file."""
     path = Path(path)
@@ -57,5 +60,8 @@ def ingest_file(
         added_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         subject=subject,
         class_level=class_level,
+        board=board,
     )
-    return IngestResult(source_id, filename, len(chunks), len(text), subject, class_level)
+    return IngestResult(
+        source_id, filename, len(chunks), len(text), subject, class_level, board
+    )

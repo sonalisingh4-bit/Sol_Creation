@@ -13,7 +13,7 @@
     <span class="logo">📝</span>
     <div>
       <h1>Solution Creation Tool</h1>
-      <p>Upload a question paper, ground answers in your sources, export solutions.</p>
+      <p>Upload a question paper — get the complete solution document. Any class, any board, NEET &amp; JEE.</p>
     </div>
   </div>
 </header>
@@ -26,72 +26,39 @@
 </div>
 {% endif %}
 
-<main class="grid">
-  <!-- Knowledge base -->
+<main class="grid single">
   <section class="card">
-    <h2>1 · Knowledge base</h2>
-    <p class="muted">Upload textbooks, notes or references. They are chunked, embedded and used to ground every answer.</p>
-
-    <form id="kb-form" hx-post="/sources/upload" hx-target="#sources" hx-swap="innerHTML"
-          hx-encoding="multipart/form-data" hx-indicator="#kb-spin"
-          hx-on::after-request="kbAfterUpload()">
-      <!-- the field actually submitted; populated by JS -->
-      <input type="file" name="files" id="kb-field" multiple hidden/>
-      <!-- hidden pickers -->
-      <input type="file" id="kb-browse-files" multiple hidden
-             accept=".pdf,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.webp"/>
-      <input type="file" id="kb-browse-folder" webkitdirectory multiple hidden/>
-
-      <div class="dropzone" id="kb-drop" tabindex="0">
-        <span>📂 Drag &amp; drop files or a folder here</span>
-        <small>or
-          <button type="button" class="linkbtn" id="kb-pick-files">browse files</button> ·
-          <button type="button" class="linkbtn" id="kb-pick-folder">browse a folder</button>
-        </small>
-        <small>PDF, DOCX, TXT, MD, CSV, images — scanned PDFs are OCR'd automatically</small>
-      </div>
-
-      <ul id="kb-selected" class="selected-list"></ul>
-      <div id="kb-skipped" class="muted small"></div>
-
-      <div class="field-row">
-        <div class="field">
-          <label for="kb-subject">Source subject</label>
-          <select name="subject" id="kb-subject">
-            {% for value, label in subjects.items() %}
-            <option value="{{ value }}">{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="field">
-          <label for="kb-class-level">Source class <span class="muted">(optional)</span></label>
-          <input type="text" name="class_level" id="kb-class-level" list="class-suggestions"
-                 placeholder="e.g. Class 11, Class 12"/>
-        </div>
-      </div>
-
-      <button type="submit" class="btn" id="kb-upload" disabled>Add to knowledge base</button>
-      <span id="kb-spin" class="htmx-indicator spinner-inline">Indexing…</span>
-    </form>
-
-    <div id="sources">
-      {% include "_sources.html" %}
-    </div>
-  </section>
-
-  <!-- Generate -->
-  <section class="card">
-    <h2>2 · Generate solutions</h2>
-    <p class="muted">Upload the question paper. The tool detects each question and its marks, then writes a model answer.</p>
+    {% include "_kb_status.html" %}
 
     <form hx-post="/generate" hx-target="#result" hx-swap="innerHTML"
           hx-encoding="multipart/form-data">
       <label class="dropzone" id="paper-drop">
         <input type="file" name="paper" id="paper-input" required
                accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"/>
-        <span id="paper-label">📄 Drag &amp; drop or click to choose a question paper</span>
-        <small>PDF, DOCX, TXT or image</small>
+        <span id="paper-label">📄 Drag &amp; drop or click to choose the question paper</span>
+        <small>PDF, DOCX, TXT or photo — scanned papers are read automatically</small>
       </label>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="class_level">Class / Exam</label>
+          <select name="class_level" id="class_level">
+            <option value="">Any / Not sure</option>
+            {% for value, label in classes.items() %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="board">Board</label>
+          <select name="board" id="board">
+            <option value="">All boards</option>
+            {% for value, label in boards.items() %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
 
       <div class="field-row">
         <div class="field">
@@ -110,24 +77,11 @@
             {% endfor %}
           </select>
         </div>
-        <div class="field">
-          <label for="class_level">Class / Level <span class="muted">(optional)</span></label>
-          <input type="text" name="class_level" id="class_level" list="class-suggestions"
-                 placeholder="e.g. Class 10, Class 12 PCB, NEET"/>
-          <datalist id="class-suggestions">
-            <option value="Class 6"></option><option value="Class 7"></option>
-            <option value="Class 8"></option><option value="Class 9"></option>
-            <option value="Class 10"></option><option value="Class 11"></option>
-            <option value="Class 12"></option><option value="NEET"></option>
-            <option value="JEE"></option><option value="Undergraduate"></option>
-            <option value="Postgraduate"></option>
-          </datalist>
-        </div>
       </div>
 
       <label class="check">
         <input type="checkbox" name="include_sources" checked/>
-        Show which sources each answer used
+        Mention the reference books used in each answer
       </label>
 
       <button type="submit" class="btn primary">✨ Generate solution document</button>

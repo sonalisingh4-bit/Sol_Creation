@@ -1,7 +1,13 @@
-"""FastAPI application: knowledge-base management + solution generation."""
+"""FastAPI application: solution generation over the prebuilt knowledge base.
+
+The knowledge base is read-only here by design: it is built centrally from the
+shared Google Drive folder (scripts/build_kb.py) and downloaded automatically
+at startup. Faculty only upload question papers.
+"""
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request, UploadFile
@@ -9,13 +15,21 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, extract, ingest, jobs
-from .vectorstore import get_store
+from . import config, drive_sync, extract, jobs
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app = FastAPI(title="Solution Creation Tool")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Fetch the prebuilt index from Drive in the background if it is missing,
+    # so the very first launch on a fresh machine needs zero manual steps.
+    drive_sync.ensure_index_async()
+    yield
+
+
+app = FastAPI(title="Solution Creation Tool", lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -27,14 +41,6 @@ def _save_upload(upload: UploadFile, dest_dir: Path) -> Path:
     return dest
 
 
-def _sources_context() -> dict:
-    store = get_store()
-    return {
-        "sources": sorted(store.sources(), key=lambda s: s.get("added_at", "")),
-        "chunk_count": store.count(),
-    }
-
-
 # --- pages ----------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
@@ -42,56 +48,20 @@ def index(request: Request):
         "request": request,
         "languages": config.LANGUAGES,
         "subjects": config.SUBJECTS,
+        "boards": config.BOARDS,
+        "classes": config.CLASSES,
         "has_key": bool(config.GEMINI_API_KEY),
-        **_sources_context(),
+        "kb": drive_sync.kb_summary(),
     }
     return templates.TemplateResponse("index.html", ctx)
 
 
-# --- knowledge base -------------------------------------------------------
-@app.post("/sources/upload", response_class=HTMLResponse)
-async def upload_sources(
-    request: Request,
-    files: list[UploadFile],
-    subject: str = Form("General"),
-    class_level: str = Form(""),
-):
-    errors: list[str] = []
-    added = 0
-    subject = subject if subject in config.SUBJECTS else "General"
-    class_level = class_level.strip() or None
-    for upload in files:
-        name = upload.filename or "file"
-        if not extract.is_supported(name):
-            errors.append(f"{name}: unsupported file type")
-            continue
-        saved = _save_upload(upload, config.UPLOAD_DIR)
-        try:
-            ingest.ingest_file(
-                saved,
-                original_name=name,
-                subject=subject,
-                class_level=class_level,
-            )
-            added += 1
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{name}: {exc}")
-    ctx = {"request": request, "flash_ok": added, "flash_errors": errors, **_sources_context()}
-    return templates.TemplateResponse("_sources.html", ctx)
-
-
-@app.post("/sources/{source_id}/delete", response_class=HTMLResponse)
-def delete_source(request: Request, source_id: str):
-    get_store().delete_source(source_id)
-    ctx = {"request": request, **_sources_context()}
-    return templates.TemplateResponse("_sources.html", ctx)
-
-
-@app.post("/sources/clear", response_class=HTMLResponse)
-def clear_sources(request: Request):
-    get_store().clear()
-    ctx = {"request": request, **_sources_context()}
-    return templates.TemplateResponse("_sources.html", ctx)
+# --- knowledge base (read-only status; content is managed by the admin) ----
+@app.get("/kb/status", response_class=HTMLResponse)
+def kb_status(request: Request):
+    return templates.TemplateResponse(
+        "_kb_status.html", {"request": request, "kb": drive_sync.kb_summary()}
+    )
 
 
 # --- generation -----------------------------------------------------------
@@ -100,6 +70,7 @@ async def generate(
     request: Request,
     paper: UploadFile,
     language: str = Form(...),
+    board: str = Form(""),
     class_level: str = Form(""),
     subject: str = Form("General"),
     include_sources: str = Form("on"),
@@ -110,7 +81,11 @@ async def generate(
         return templates.TemplateResponse("_job_error.html", ctx)
     saved = _save_upload(paper, config.UPLOAD_DIR)
     subject = subject if subject in config.SUBJECTS else "General"
-    job = jobs.start_job(saved, language, class_level.strip(), subject, include_sources == "on")
+    board = board if board in config.BOARDS else ""
+    class_level = class_level if class_level in config.CLASSES else ""
+    job = jobs.start_job(
+        saved, language, class_level, subject, board, include_sources == "on"
+    )
     return templates.TemplateResponse("_job.html", {"request": request, "job": job})
 
 

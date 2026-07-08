@@ -54,6 +54,14 @@ class VectorStore:
         if _SRC_FILE.exists():
             self._sources = json.loads(_SRC_FILE.read_text(encoding="utf-8"))
 
+    def reload(self) -> None:
+        """Re-read the index files from disk (after an unpacked download)."""
+        with self._lock:
+            self._vectors = None
+            self._meta = []
+            self._sources = {}
+            self._load()
+
     def _save(self) -> None:
         if self._vectors is not None:
             np.save(_VEC_FILE, self._vectors)
@@ -73,6 +81,7 @@ class VectorStore:
         added_at: str,
         subject: str | None = None,
         class_level: str | None = None,
+        board: str | None = None,
     ) -> None:
         if not chunks:
             return
@@ -91,6 +100,7 @@ class VectorStore:
                         "text": text,
                         "subject": subject or None,
                         "class_level": class_level or None,
+                        "board": board or None,
                     }
                 )
             self._sources[source_id] = {
@@ -99,6 +109,7 @@ class VectorStore:
                 "added_at": added_at,
                 "subject": subject or None,
                 "class_level": class_level or None,
+                "board": board or None,
             }
             self._save()
 
@@ -130,15 +141,19 @@ class VectorStore:
         *,
         subject: str | None = None,
         class_level: str | None = None,
+        board: str | None = None,
     ) -> list[Hit]:
         with self._lock:
             if self._vectors is None or not self._meta:
                 return []
+            # Board-neutral chunks (board=None, e.g. material that serves both
+            # boards) stay visible to every board-filtered query.
             candidates = [
                 i
                 for i, m in enumerate(self._meta)
                 if (not subject or m.get("subject") == subject)
                 and (not class_level or m.get("class_level") == class_level)
+                and (not board or m.get("board") in (board, None))
             ]
             if not candidates:
                 return []

@@ -44,6 +44,8 @@ body {
   display: grid; grid-template-columns: 1fr 1fr; gap: 22px;
 }
 @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+/* Single-card faculty layout: one centred column, comfortable width. */
+.grid.single { grid-template-columns: 1fr; max-width: 720px; }
 
 .card {
   background: var(--card); border: 1px solid var(--border);

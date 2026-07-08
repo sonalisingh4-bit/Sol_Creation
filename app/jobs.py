@@ -52,6 +52,7 @@ def _run(
     language: str,
     class_level: str,
     subject: str,
+    board: str,
     include_sources: bool,
 ) -> None:
     try:
@@ -86,6 +87,7 @@ def _run(
             language,
             class_level=class_level or None,
             subject=subject or None,
+            board=board or None,
             paper_file=uploaded,
             paper_pages=paper_pages,
             progress=progress,
@@ -119,6 +121,7 @@ def start_job(
     language: str,
     class_level: str,
     subject: str,
+    board: str,
     include_sources: bool,
 ) -> Job:
     job = Job(id=uuid.uuid4().hex)
@@ -126,7 +129,7 @@ def start_job(
         _JOBS[job.id] = job
     threading.Thread(
         target=_run,
-        args=(job, paper_path, language, class_level, subject, include_sources),
+        args=(job, paper_path, language, class_level, subject, board, include_sources),
         daemon=True,
     ).start()
     return job

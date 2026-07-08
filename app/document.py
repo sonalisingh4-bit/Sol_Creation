@@ -433,6 +433,8 @@ def build_documents(
     meta = doc.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
     bits = [f"Language: {paper.language}"]
+    if getattr(paper, "board", None):
+        bits.append(f"Board: {paper.board}")
     if paper.class_level:
         bits.append(f"Class/Level: {paper.class_level}")
     if paper.total_marks is not None:

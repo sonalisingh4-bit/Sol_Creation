@@ -35,9 +35,30 @@ _MATH_RE = re.compile(
     r"|[îĵ]"                                   # unit vectors
 )
 
+_MCQ_RE = re.compile(
+    r"(?:^|\n|\s)(?:\([A-Da-d1-4]\)|[A-Da-d1-4][.)])\s*\S"
+    r"|multiple[- ]choice|choose\s+the\s+correct|correct\s+option|which\s+of\s+the\s+following",
+    re.IGNORECASE,
+)
+
 
 def _is_math_heavy(text: str | None) -> bool:
     return bool(text) and bool(_MATH_RE.search(text))
+
+
+def _is_mcq(text: str | None, class_level: str | None = None) -> bool:
+    combined = f"{text or ''}\n{class_level or ''}"
+    level = (class_level or "").lower()
+    return bool(_MCQ_RE.search(combined)) or "neet" in level or "jee" in level
+
+
+def _exam_name(class_level: str | None) -> str:
+    level = (class_level or "").lower()
+    if "neet" in level:
+        return "NEET"
+    if "jee" in level:
+        return "JEE"
+    return "MCQ"
 
 
 def _tokens(s: str) -> set[str]:
@@ -161,7 +182,8 @@ _MATH_INSTRUCTIONS = r'''MATHEMATICS — write ALL mathematics as LaTeX:
 
 # Subjects whose answers are quantitative and need typeset equations (LaTeX). Other
 # subjects (Biology, General) are prose/point-wise and skip the maths instructions.
-_QUANTITATIVE = {"Mathematics", "Physics", "Chemistry"}
+# Combined Science includes physics/chemistry numericals, so it needs them too.
+_QUANTITATIVE = {"Mathematics", "Physics", "Chemistry", "Science"}
 
 # Per-subject "answer-writing style" — how a full-marks answer in that subject is
 # actually written. This is the single most important lever for answer quality, and
@@ -210,6 +232,34 @@ _SUBJECT_STYLE: dict[str, str] = {
         "request it as a figure and still describe it in words. Be complete but concise "
         "— do not restate the question or add irrelevant background."
     ),
+    "Science": (
+        "Answer in EXAM ANSWER-WRITING style for school Science (combined physics, "
+        "chemistry and biology). For numericals: state the formula, substitute the "
+        "given values WITH UNITS, and give the final value with its unit. For "
+        "reactions: write balanced equations with correct formulae. For descriptive "
+        "parts: answer point-wise with correct terminology, roughly one substantive "
+        "point per mark, and use a labelled diagram where the question expects one. "
+        "Keep the depth appropriate for the student's class — no advanced material "
+        "beyond the syllabus. Be complete but concise."
+    ),
+    "Social Science": (
+        "Answer in EXAM ANSWER-WRITING style for Social Science (history, geography, "
+        "civics, economics). Answers are DESCRIPTIVE and POINT-WISE, never equations. "
+        "Use correct names, dates, places and terms; organise longer answers as "
+        "clearly separated points or short headings with roughly one substantive "
+        "point per mark. For 'explain/describe' give causes, features or consequences "
+        "as the question asks; for map/data questions state exactly what is asked. Be "
+        "complete but concise — do not restate the question or pad with background."
+    ),
+    "English": (
+        "Answer in EXAM ANSWER-WRITING style for English. For grammar: give the "
+        "corrected/transformed sentence directly, with a one-line rule only if asked. "
+        "For comprehension: answer from the passage in your own words, brief and "
+        "precise. For literature: answer with reference to the text — name the "
+        "work/author where relevant and support points with brief evidence or quotes. "
+        "For writing tasks (letter, essay, notice): follow the standard exam format "
+        "exactly. Match length to the marks; never pad."
+    ),
     "General": (
         "Answer in a clear, well-structured, exam-appropriate way: address exactly what "
         "the question asks, at the depth the marks warrant, using correct terminology "
@@ -251,6 +301,32 @@ def _marks_guidance(marks: float | None) -> str:
     )
 
 
+def _mcq_guidance(subject: str | None, class_level: str | None) -> str:
+    exam = _exam_name(class_level)
+    subj = subject or "General"
+    ncert = ""
+    if exam == "NEET" and subj in {"Physics", "Chemistry", "Biology"}:
+        ncert = (
+            f"Use NCERT {subj} Class 11 and Class 12 as the main authority. "
+            "The retrieved knowledge-base material, when present, is preferred."
+        )
+    elif exam == "JEE" and subj in {"Physics", "Chemistry", "Mathematics"}:
+        ncert = (
+            "Use the retrieved reference material first, then standard JEE-level "
+            f"{subj} knowledge where needed."
+        )
+    else:
+        ncert = "Use the retrieved reference material first."
+    return (
+        f"This is a {exam} / multiple-choice style question. Keep the solution brief "
+        "and accuracy-focused. Start with the final choice in this format: "
+        "'Correct option: (X) ...'. Then give only the essential reasoning/calculation "
+        "needed to justify the option. Do not write a long textbook-style answer. "
+        f"{ncert} If the question text/options are unclear, incomplete, or you cannot "
+        "determine the answer confidently, write 'UNSURE' first and briefly explain why."
+    )
+
+
 def _build_prompt(
     *,
     question_text: str,
@@ -262,7 +338,9 @@ def _build_prompt(
     context: str,
     figure_label: str | None,
     subject: str | None = None,
+    board: str | None = None,
     math_page: bool = False,
+    is_mcq: bool = False,
 ) -> str:
     parts: list[str] = []
     if math_page:
@@ -319,13 +397,18 @@ def _build_prompt(
     parts.append(f"Question to answer: {question_text}")
     if instruction:
         parts.append(f"Specific instruction from the paper: {instruction}")
-    parts.append(_marks_guidance(marks))
-    parts.append(_subject_style(subject))
-    if class_level:
+    if is_mcq:
+        parts.append(_mcq_guidance(subject, class_level))
+    else:
+        parts.append(_marks_guidance(marks))
+        parts.append(_subject_style(subject))
+    if class_level or board:
+        level = " ".join(x for x in (board, class_level) if x)
         parts.append(
-            f"The student is at this level: {class_level}. Pitch the depth, "
-            "vocabulary, examples and rigour to that level — thorough enough to "
-            "score full marks, but neither over-advanced nor over-simplified."
+            f"The student is at this level: {level}. Pitch the depth, vocabulary, "
+            "examples and rigour to that level and board's syllabus/answer "
+            "conventions — thorough enough to score full marks, but neither "
+            "over-advanced nor over-simplified."
         )
     parts.append(grounding)
     parts.append(
@@ -374,6 +457,7 @@ class SolvedPaper:
     language: str
     class_level: str | None
     questions: list[SolvedQuestion]
+    board: str | None = None
 
 
 def _retrieve(
@@ -382,27 +466,23 @@ def _retrieve(
     *,
     subject: str | None = None,
     class_level: str | None = None,
+    board: str | None = None,
 ) -> tuple[str, list[str]]:
     store = get_store()
     if store.count() == 0:
         return "", []
     emb = gemini_client.embed_texts([query], is_query=True)[0]
-    hits: list[Hit] = store.query(
-        emb,
-        top_k,
-        subject=subject if subject and subject != "General" else None,
-        class_level=class_level.strip() if class_level and class_level.strip() else None,
-    )
-    # If a class-specific search finds nothing, fall back to all files for that
-    # subject. This matches the user-facing rule: class is optional/narrowing, not
-    # a reason to answer with no references when the subject has useful material.
-    if not hits and class_level:
-        hits = store.query(
-            emb,
-            top_k,
-            subject=subject if subject and subject != "General" else None,
-            class_level=None,
-        )
+    subj = subject if subject and subject != "General" else None
+    cls = class_level.strip() if class_level and class_level.strip() else None
+    brd = board.strip() if board and board.strip() else None
+    hits: list[Hit] = store.query(emb, top_k, subject=subj, class_level=cls, board=brd)
+    # Board/class are narrowing filters, never a reason to answer with no
+    # references: fall back to the whole board's subject material, then to the
+    # subject across boards, before giving up.
+    if not hits and cls:
+        hits = store.query(emb, top_k, subject=subj, class_level=None, board=brd)
+    if not hits and brd:
+        hits = store.query(emb, top_k, subject=subj, class_level=None, board=None)
     context = "\n\n---\n\n".join(f"[Source: {h.source}]\n{h.text}" for h in hits)
     sources: list[str] = []
     for h in hits:
@@ -445,6 +525,7 @@ def _answer_unit(
     language: str,
     class_level: str | None,
     subject: str | None,
+    board: str | None,
     figure_label: str | None,
     paper_file,
     paper_pages: list[bytes] | None = None,
@@ -457,16 +538,19 @@ def _answer_unit(
         config.TOP_K,
         subject=subject,
         class_level=class_level,
+        board=board,
     )
     # Attach the page image when the question depends on a figure OR carries dense math
     # notation (so the model reads the real formula, not a garbled transcription).
     math_heavy = _is_math_heavy(question_text) or _is_math_heavy(parent_text)
+    mcq = _is_mcq(query, class_level)
     attachments = None
     if figure_label or math_heavy:
         attachments = _figure_attachments(
             query, paper_file, paper_pages or [], page_texts or [], page
         )
     use_page = attachments is not None
+    careful = use_page or mcq
     prompt = _build_prompt(
         question_text=question_text,
         parent_text=parent_text,
@@ -476,8 +560,10 @@ def _answer_unit(
         class_level=class_level,
         context=context,
         subject=subject,
+        board=board,
         figure_label=figure_label if (use_page and figure_label) else None,
         math_page=bool(use_page and math_heavy and not figure_label),
+        is_mcq=mcq,
     )
     def _generate(temperature: float) -> str:
         return gemini_client.generate_text(
@@ -490,7 +576,7 @@ def _answer_unit(
             attachments=attachments,
         )
 
-    answer = _generate(0.1 if use_page else 0.3)
+    answer = _generate(0.1 if careful else 0.3)
     # A blank or near-empty answer is almost always a transient model miss (it happens
     # on the occasional hard part). It must NEVER leave a question silently unanswered
     # in the document, so retry with a touch more warmth before giving up.
@@ -508,6 +594,7 @@ def solve_paper(
     *,
     class_level: str | None = None,
     subject: str | None = None,
+    board: str | None = None,
     paper_file=None,
     paper_pages: list[bytes] | None = None,
     progress: ProgressFn | None = None,
@@ -535,6 +622,7 @@ def solve_paper(
                     language=language,
                     class_level=class_level,
                     subject=subject,
+                    board=board,
                     figure_label=f"Question {q.number}" if q.requires_figure else None,
                     paper_file=paper_file,
                     paper_pages=paper_pages,
@@ -559,6 +647,7 @@ def solve_paper(
                         language=language,
                         class_level=class_level,
                         subject=subject,
+                        board=board,
                         figure_label=f"Question {q.number}({sp.number})" if needs_fig else None,
                         paper_file=paper_file,
                         paper_pages=paper_pages,
@@ -590,6 +679,7 @@ def solve_paper(
                     language=language,
                     class_level=class_level,
                     subject=subject,
+                    board=board,
                     figure_label=f"Question {q.number}" if q.requires_figure else None,
                     paper_file=paper_file,
                     paper_pages=paper_pages,
@@ -611,4 +701,5 @@ def solve_paper(
         language=language,
         class_level=class_level or None,
         questions=solved_questions,
+        board=board or None,
     )
