@@ -35,11 +35,14 @@ _MATH_RE = re.compile(
     r"|[îĵ]"                                   # unit vectors
 )
 
-_MCQ_RE = re.compile(
-    r"(?:^|\n|\s)(?:\([A-Da-d1-4]\)|[A-Da-d1-4][.)])\s*\S"
-    r"|multiple[- ]choice|choose\s+the\s+correct|correct\s+option|which\s+of\s+the\s+following",
+_MCQ_KEYWORD_RE = re.compile(
+    r"multiple[- ]choice|choose\s+the\s+correct|correct\s+option"
+    r"|which\s+of\s+the\s+following|tick\s+the\s+correct",
     re.IGNORECASE,
 )
+# An option marker: "(a)", "a)", "A.", "(2)", "3)" after start/space/punctuation.
+# The (?!\d) guard keeps decimals ("2.5 km", "3.14") from reading as markers.
+_OPTION_MARKER_RE = re.compile(r"(?:^|[\s:;,])\(?([A-Da-d1-4])[.)\]](?!\d)")
 
 
 def _is_math_heavy(text: str | None) -> bool:
@@ -47,9 +50,18 @@ def _is_math_heavy(text: str | None) -> bool:
 
 
 def _is_mcq(text: str | None, class_level: str | None = None) -> bool:
-    combined = f"{text or ''}\n{class_level or ''}"
+    """True only for genuine option-style questions. A real option list shows at
+    least three distinct labels in one style ((a)(b)(c) or (1)(2)(3)) — which
+    numericals ("2.5 km") and part enumerations "(a) … (b) …" never do."""
     level = (class_level or "").lower()
-    return bool(_MCQ_RE.search(combined)) or "neet" in level or "jee" in level
+    if "neet" in level or "jee" in level:
+        return True
+    if not text:
+        return False
+    if _MCQ_KEYWORD_RE.search(text):
+        return True
+    labels = {m.group(1).lower() for m in _OPTION_MARKER_RE.finditer(text)}
+    return len(labels & set("abcd")) >= 3 or len(labels & set("1234")) >= 3
 
 
 def _exam_name(class_level: str | None) -> str:
@@ -543,7 +555,13 @@ def _answer_unit(
     # Attach the page image when the question depends on a figure OR carries dense math
     # notation (so the model reads the real formula, not a garbled transcription).
     math_heavy = _is_math_heavy(question_text) or _is_math_heavy(parent_text)
-    mcq = _is_mcq(query, class_level)
+    # MCQ detection looks at the question's OWN text (its options live there);
+    # scanning the concatenated parent text would flag every subpart of a
+    # "(a) … (b) …" enumeration. The parent may still carry an explicit
+    # "choose the correct option" instruction, so keywords check it too.
+    mcq = _is_mcq(question_text, class_level) or bool(
+        parent_text and _MCQ_KEYWORD_RE.search(parent_text)
+    )
     attachments = None
     if figure_label or math_heavy:
         attachments = _figure_attachments(

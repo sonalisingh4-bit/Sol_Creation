@@ -47,12 +47,30 @@ class VectorStore:
 
     # --- persistence ------------------------------------------------------
     def _load(self) -> None:
-        if _VEC_FILE.exists():
-            self._vectors = np.load(_VEC_FILE)
-        if _META_FILE.exists():
-            self._meta = json.loads(_META_FILE.read_text(encoding="utf-8"))
-        if _SRC_FILE.exists():
-            self._sources = json.loads(_SRC_FILE.read_text(encoding="utf-8"))
+        try:
+            if _VEC_FILE.exists():
+                self._vectors = np.load(_VEC_FILE)
+            if _META_FILE.exists():
+                self._meta = json.loads(_META_FILE.read_text(encoding="utf-8"))
+            if _SRC_FILE.exists():
+                self._sources = json.loads(_SRC_FILE.read_text(encoding="utf-8"))
+            n_vectors = 0 if self._vectors is None else int(self._vectors.shape[0])
+            if n_vectors != len(self._meta):
+                raise ValueError(
+                    f"index inconsistent: {n_vectors} vectors vs {len(self._meta)} chunks"
+                )
+        except Exception as exc:  # noqa: BLE001
+            # A truncated/corrupt index (machine shut down mid-download, partial
+            # copy, …) must never brick startup: quarantine it and start empty
+            # so the Drive bootstrap can fetch a fresh copy on this launch.
+            print(f"WARNING: knowledge-base index unreadable ({exc}); starting empty.")
+            self._vectors, self._meta, self._sources = None, [], {}
+            for f in (_VEC_FILE, _META_FILE, _SRC_FILE):
+                try:
+                    if f.exists():
+                        f.replace(f.with_suffix(f.suffix + ".corrupt"))
+                except OSError:
+                    pass
 
     def reload(self) -> None:
         """Re-read the index files from disk (after an unpacked download)."""

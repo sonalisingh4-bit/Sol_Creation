@@ -27,6 +27,7 @@ Options:
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -49,7 +50,13 @@ def build(
     keep: bool = False,
     limit: int | None = None,
     dry_run: bool = False,
+    fresh: bool = False,
 ) -> None:
+    if fresh and SOURCES_DIR.exists():
+        # With DRIVE_API_KEY the mirror prunes Drive deletions by itself; the
+        # keyless gdown path cannot, so --fresh forces a clean re-download.
+        print(f"--fresh: clearing {SOURCES_DIR} …")
+        shutil.rmtree(SOURCES_DIR, ignore_errors=True)
     if not skip_download:
         if not folder:
             sys.exit(
@@ -123,6 +130,9 @@ def main() -> None:
                         help="Only ingest N files (quick test)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show the Board/Class/Subject tag for every file, ingest nothing")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Delete the local cache first so Drive deletions/renames "
+                             "propagate (automatic when DRIVE_API_KEY is set)")
     args = parser.parse_args()
     build(
         args.folder,
@@ -130,6 +140,7 @@ def main() -> None:
         keep=args.keep,
         limit=args.limit,
         dry_run=args.dry_run,
+        fresh=args.fresh,
     )
 
 

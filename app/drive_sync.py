@@ -17,11 +17,14 @@ Both paths only need the folder shared as "Anyone with the link - Viewer".
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import threading
 import urllib.parse
 import urllib.request
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 from . import config
@@ -36,6 +39,10 @@ _CLASS_RE = re.compile(
     re.IGNORECASE,
 )
 _ORDINAL_RE = re.compile(r"\b(1[0-2]|[6-9])\s*th\b", re.IGNORECASE)
+# "Class 6-10" / "Grade 6 to 10" names a library's range, not one book's class.
+_RANGE_RE = re.compile(r"\d\s*(?:-|–|—|to)\s*\d", re.IGNORECASE)
+# Branding like "Physics Wallah"/"PW" must never read as subject Physics.
+_BRANDING_RE = re.compile(r"physics\s*wallah|\bpw\b", re.IGNORECASE)
 
 # Checked in order — "Social Science" must win before the bare "science" match,
 # and Physics/Chemistry/Biology before it too (ICSE 9-10 splits Science).
@@ -56,12 +63,36 @@ _CBSE_RE = re.compile(r"\bcbse\b|\bncert\b", re.IGNORECASE)
 _STATE_RE = re.compile(r"state\s*board", re.IGNORECASE)
 
 
+def _class_from_segment(segment: str) -> str | None:
+    if _RANGE_RE.search(segment):
+        return None  # a range ("Class 6-10") describes the collection, not the book
+    m = _CLASS_RE.search(segment) or _ORDINAL_RE.search(segment)
+    if m:
+        token = m.group(1).lower()
+        return f"Class {_ROMAN.get(token, token)}"
+    if segment.strip() in {"6", "7", "8", "9", "10", "11", "12"}:
+        return f"Class {segment.strip()}"
+    return None
+
+
+def _subject_from_segment(segment: str) -> str | None:
+    segment = _BRANDING_RE.sub(" ", segment)
+    for name, pattern in _SUBJECT_PATTERNS:
+        if pattern.search(segment):
+            return name
+    return None
+
+
 def classify_path(rel_path: str | Path) -> tuple[str | None, str | None, str | None]:
     """(board, class_level, subject) read from a file's folder path.
 
     Any part of the path may carry the tag ("ICSE/Class 9/Physics/ch1.pdf",
-    "Maths/8th CBSE/..."). Missing tags come back as None: an untagged board
-    stays visible to both boards, an untagged class/subject is a fallback pool.
+    "Maths/8th CBSE/..."). The most specific wins: the deepest folder that
+    names a class beats a "Foundation Class 6-10" wrapper above it, and the
+    containing folder's subject beats keywords inside the chapter filename
+    ("Science/Chemical Reactions.pdf" is Science, not Chemistry). Missing tags
+    come back as None: an untagged board stays visible to every board, an
+    untagged class/subject is a fallback pool.
     """
     text = str(rel_path).replace("\\", "/")
     segments = [s for s in text.split("/") if s]
@@ -76,23 +107,20 @@ def classify_path(rel_path: str | Path) -> tuple[str | None, str | None, str | N
         board = "State Board"
 
     class_level: str | None = None
-    m = _CLASS_RE.search(joined) or _ORDINAL_RE.search(joined)
-    if m:
-        token = m.group(1).lower()
-        class_level = f"Class {_ROMAN.get(token, token)}"
-    else:
-        # A whole segment that is just "6".."12" (e.g. "CBSE/8/Science").
-        for seg in segments:
-            if seg.strip() in {"6", "7", "8", "9", "10", "11", "12"}:
-                class_level = f"Class {seg.strip()}"
-                break
+    for seg in reversed(segments):  # deepest (most specific) segment first
+        class_level = _class_from_segment(seg)
+        if class_level:
+            break
     if class_level is not None and class_level not in config.CLASSES:
         class_level = None
 
+    # Subject: deepest DIRECTORY first, chapter filename only as a last resort —
+    # chapter titles ("Physical and Chemical Changes.pdf") routinely name other
+    # subjects than the book they belong to.
     subject: str | None = None
-    for name, pattern in _SUBJECT_PATTERNS:
-        if pattern.search(joined):
-            subject = name
+    for seg in [*reversed(segments[:-1]), segments[-1]]:
+        subject = _subject_from_segment(seg)
+        if subject:
             break
 
     return board, class_level, subject
@@ -128,13 +156,17 @@ def download_drive_file(url: str, dest: Path) -> Path:
     return Path(out)
 
 
+_FOLDER_MIME = "application/vnd.google-apps.folder"
+_SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+
+
 def _api_list_children(folder_id: str, key: str) -> list[dict]:
     files: list[dict] = []
     page_token: str | None = None
     while True:
         params = {
             "q": f"'{folder_id}' in parents and trashed=false",
-            "fields": "nextPageToken, files(id, name, mimeType)",
+            "fields": "nextPageToken, files(id, name, mimeType, shortcutDetails)",
             "pageSize": "1000",
             "key": key,
         }
@@ -152,29 +184,84 @@ def _api_list_children(folder_id: str, key: str) -> list[dict]:
 def _api_download(file_id: str, key: str, dest: Path) -> None:
     import requests  # gdown dependency, always present
 
+    # Stream to a .part file and swap in only when complete, so an interrupted
+    # download is never mistaken for a finished (cached) file on the next run.
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={key}"
-    with requests.get(url, stream=True, timeout=120) as resp:
-        resp.raise_for_status()
-        with dest.open("wb") as fh:
-            for chunk in resp.iter_content(chunk_size=1 << 20):
-                fh.write(chunk)
+    tmp = dest.with_name(dest.name + ".part")
+    try:
+        with requests.get(url, stream=True, timeout=120) as resp:
+            resp.raise_for_status()
+            with tmp.open("wb") as fh:
+                for chunk in resp.iter_content(chunk_size=1 << 20):
+                    fh.write(chunk)
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _dedup_name(name: str, file_id: str) -> str:
+    p = Path(name)
+    return f"{p.stem}__{file_id[:8]}{p.suffix}"
 
 
 def _api_download_folder(folder_id: str, key: str, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
+
+    # Resolve Drive shortcuts to their targets (they carry no content of their
+    # own); a shortcut to a folder is mirrored like a real subfolder.
+    children: list[dict] = []
     for item in _api_list_children(folder_id, key):
-        name = item["name"].replace("/", "_").replace("\\", "_")
-        if item["mimeType"] == "application/vnd.google-apps.folder":
-            _api_download_folder(item["id"], key, dest / name)
-        elif item["mimeType"].startswith("application/vnd.google-apps"):
-            print(f"SKIP (Google Doc, not a file): {dest / name}")
+        if item["mimeType"] == _SHORTCUT_MIME:
+            details = item.get("shortcutDetails") or {}
+            target_id = details.get("targetId")
+            if not target_id:
+                print(f"SKIP (shortcut without target): {dest / item['name']}")
+                continue
+            children.append({
+                "id": target_id,
+                "name": item["name"],
+                "mimeType": details.get("targetMimeType", "application/octet-stream"),
+            })
         else:
-            target = dest / name
+            children.append(item)
+
+    # Drive allows same-named siblings; give duplicates a deterministic
+    # id-based suffix instead of silently keeping only the first one.
+    sanitised = Counter(
+        item["name"].replace("/", "_").replace("\\", "_") for item in children
+    )
+    expected: set[str] = set()
+    for item in children:
+        name = item["name"].replace("/", "_").replace("\\", "_")
+        if sanitised[name] > 1:
+            name = _dedup_name(name, item["id"])
+        target = dest / name
+        if item["mimeType"] == _FOLDER_MIME:
+            expected.add(name)
+            _api_download_folder(item["id"], key, target)
+        elif item["mimeType"].startswith("application/vnd.google-apps"):
+            print(f"SKIP (Google Workspace doc, not downloadable): {target}")
+        else:
+            if target.is_dir():  # a file sharing its name with a sibling folder
+                name = _dedup_name(name, item["id"])
+                target = dest / name
+            expected.add(name)
             if target.exists() and target.stat().st_size > 0:
                 print(f"cached: {target.name}")
                 continue
             print(f"downloading: {target}")
             _api_download(item["id"], key, target)
+
+    # True mirror: drop local files/folders that were deleted or renamed on
+    # Drive, so stale books never linger in the published knowledge base.
+    for existing in dest.iterdir():
+        if existing.name in expected or existing.name.endswith(".part"):
+            continue
+        print(f"pruned (no longer on Drive): {existing}")
+        if existing.is_dir():
+            shutil.rmtree(existing, ignore_errors=True)
+        else:
+            existing.unlink(missing_ok=True)
 
 
 def download_drive_folder(url_or_id: str, dest: Path) -> Path:
@@ -213,6 +300,13 @@ _INDEX_FILES = ("vectors.npy", "meta.json", "sources.json")
 
 def pack_index(zip_path: Path) -> Path:
     """Zip the built index so the admin can upload ONE file to Drive."""
+    vectors = config.INDEX_DIR / "vectors.npy"
+    meta = config.INDEX_DIR / "meta.json"
+    if not (vectors.exists() and vectors.stat().st_size > 0 and meta.exists()):
+        raise RuntimeError(
+            "data/index is incomplete (vectors.npy/meta.json missing) — "
+            "nothing was indexed, so there is no knowledge base to publish."
+        )
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in _INDEX_FILES:
@@ -225,13 +319,22 @@ def pack_index(zip_path: Path) -> Path:
 def unpack_index(zip_path: Path) -> None:
     with zipfile.ZipFile(zip_path) as zf:
         names = {Path(n).name: n for n in zf.namelist()}
-        if "meta.json" not in names:
-            raise RuntimeError("The downloaded zip is not a knowledge-base index.")
+        if "meta.json" not in names or "vectors.npy" not in names:
+            raise RuntimeError(
+                "The downloaded zip is not a complete knowledge-base index."
+            )
+        # Extract everything to .tmp names first, then swap all files in — a
+        # crash mid-extract must never leave a half-written live index behind.
+        staged: list[tuple[Path, Path]] = []
         for name in _INDEX_FILES:
             if name in names:
-                target = config.INDEX_DIR / name
-                with zf.open(names[name]) as src, target.open("wb") as out:
-                    out.write(src.read())
+                final = config.INDEX_DIR / name
+                tmp = config.INDEX_DIR / (name + ".tmp")
+                with zf.open(names[name]) as src, tmp.open("wb") as out:
+                    shutil.copyfileobj(src, out)
+                staged.append((tmp, final))
+        for tmp, final in staged:
+            os.replace(tmp, final)
 
 
 _status_lock = threading.Lock()
