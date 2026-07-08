@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Solution Creation Tool</title>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">📝</span>
+    <div>
+      <h1>Solution Creation Tool</h1>
+      <p>Upload a question paper, ground answers in your sources, export solutions.</p>
+    </div>
+  </div>
+</header>
+
+{% if not has_key %}
+<div class="banner warn">
+  ⚠️ <strong>GEMINI_API_KEY is not set.</strong> Copy <code>.env.example</code> to
+  <code>.env</code>, add your key from
+  <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>, and restart.
+</div>
+{% endif %}
+
+<main class="grid">
+  <!-- Knowledge base -->
+  <section class="card">
+    <h2>1 · Knowledge base</h2>
+    <p class="muted">Upload textbooks, notes or references. They are chunked, embedded and used to ground every answer.</p>
+
+    <form id="kb-form" hx-post="/sources/upload" hx-target="#sources" hx-swap="innerHTML"
+          hx-encoding="multipart/form-data" hx-indicator="#kb-spin"
+          hx-on::after-request="kbAfterUpload()">
+      <!-- the field actually submitted; populated by JS -->
+      <input type="file" name="files" id="kb-field" multiple hidden/>
+      <!-- hidden pickers -->
+      <input type="file" id="kb-browse-files" multiple hidden
+             accept=".pdf,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.webp"/>
+      <input type="file" id="kb-browse-folder" webkitdirectory multiple hidden/>
+
+      <div class="dropzone" id="kb-drop" tabindex="0">
+        <span>📂 Drag &amp; drop files or a folder here</span>
+        <small>or
+          <button type="button" class="linkbtn" id="kb-pick-files">browse files</button> ·
+          <button type="button" class="linkbtn" id="kb-pick-folder">browse a folder</button>
+        </small>
+        <small>PDF, DOCX, TXT, MD, CSV, images — scanned PDFs are OCR'd automatically</small>
+      </div>
+
+      <ul id="kb-selected" class="selected-list"></ul>
+      <div id="kb-skipped" class="muted small"></div>
+
+      <button type="submit" class="btn" id="kb-upload" disabled>Add to knowledge base</button>
+      <span id="kb-spin" class="htmx-indicator spinner-inline">Indexing…</span>
+    </form>
+
+    <div id="sources">
+      {% include "_sources.html" %}
+    </div>
+  </section>
+
+  <!-- Generate -->
+  <section class="card">
+    <h2>2 · Generate solutions</h2>
+    <p class="muted">Upload the question paper. The tool detects each question and its marks, then writes a model answer.</p>
+
+    <form hx-post="/generate" hx-target="#result" hx-swap="innerHTML"
+          hx-encoding="multipart/form-data">
+      <label class="dropzone" id="paper-drop">
+        <input type="file" name="paper" id="paper-input" required
+               accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"/>
+        <span id="paper-label">📄 Drag &amp; drop or click to choose a question paper</span>
+        <small>PDF, DOCX, TXT or image</small>
+      </label>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="subject">Subject</label>
+          <select name="subject" id="subject">
+            {% for value, label in subjects.items() %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="language">Answer language</label>
+          <select name="language" id="language">
+            {% for value, label in languages.items() %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="class_level">Class / Level <span class="muted">(optional)</span></label>
+          <input type="text" name="class_level" id="class_level" list="class-suggestions"
+                 placeholder="e.g. Class 10, Class 12 PCB, NEET"/>
+          <datalist id="class-suggestions">
+            <option value="Class 6"></option><option value="Class 7"></option>
+            <option value="Class 8"></option><option value="Class 9"></option>
+            <option value="Class 10"></option><option value="Class 11"></option>
+            <option value="Class 12"></option><option value="NEET"></option>
+            <option value="JEE"></option><option value="Undergraduate"></option>
+            <option value="Postgraduate"></option>
+          </datalist>
+        </div>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" name="include_sources" checked/>
+        Show which sources each answer used
+      </label>
+
+      <button type="submit" class="btn primary">✨ Generate solution document</button>
+    </form>
+
+    <div id="result"></div>
+  </section>
+</main>
+
+<footer class="foot">Powered by Gemini · answers are AI-generated — review before use.</footer>
+<script src="/static/js/main.js"></script>
+</body>
+</html>

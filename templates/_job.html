@@ -1,0 +1,21 @@
+{% set running = job.status not in ("done", "error") %}
+<div class="job {{ job.status }}"
+     {% if running %}hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:1.5s" hx-swap="outerHTML"{% endif %}>
+
+  {% if job.status == "error" %}
+    <div class="flash err"><strong>Generation failed.</strong> {{ job.error }}</div>
+  {% elif job.status == "done" %}
+    <div class="flash ok"><strong>✅ Solutions ready</strong>{% if job.title %} — {{ job.title }}{% endif %}</div>
+    <div class="downloads">
+      <a class="btn primary" href="/download/{{ job.id }}/docx">⬇️ Download .docx</a>
+      {% if job.pdf_name %}
+      <a class="btn" href="/download/{{ job.id }}/pdf">⬇️ Download .pdf</a>
+      {% endif %}
+    </div>
+    {% if job.pdf_note %}<p class="muted small">ℹ️ {{ job.pdf_note }}</p>{% endif %}
+  {% else %}
+    <div class="job-msg"><span class="spinner"></span> {{ job.message }}</div>
+    <div class="progress"><div class="bar" style="width: {{ job.percent }}%"></div></div>
+    <div class="muted small">{{ job.percent }}%</div>
+  {% endif %}
+</div>
