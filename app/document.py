@@ -227,7 +227,9 @@ def _append_equation(paragraph, latex: str) -> bool:
         png = mathrender.latex_to_png(latex)
         if png is None:
             return False
-        paragraph.add_run().add_picture(BytesIO(png), height=Pt(16))
+        # Preserve the PNG's DPI-based natural size. Forcing every formula to the
+        # same height makes simple symbols look huge and tall fractions look tiny.
+        paragraph.add_run().add_picture(BytesIO(png))
         return True
     paragraph._p.append(el)
     return True
