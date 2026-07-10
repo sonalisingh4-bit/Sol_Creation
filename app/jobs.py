@@ -7,7 +7,9 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, document, page_images, paper_parser, solver
+import pw_access
+
+from . import config, document, gemini_client, page_images, paper_parser, solver
 
 
 @dataclass
@@ -54,8 +56,18 @@ def _run(
     subject: str,
     board: str,
     include_sources: bool,
+    google_token: str,
 ) -> None:
+    usage = pw_access.UsageSession(
+        google_token,
+        filename=paper_path.name,
+        input_unit="No. of questions",
+        count=None,
+    )
     try:
+        if not pw_access.check_allowed(google_token):
+            raise PermissionError("Not authorized for this app.")
+        gemini_client.set_proxy_context(google_token, usage)
         job.status = "parsing"
         job.message = "Analysing the question paper…"
         # Upload PDFs/images once and reuse for parsing AND for figure questions.
@@ -63,6 +75,7 @@ def _run(
         paper = paper_parser.parse_paper(paper_path, uploaded=uploaded)
         job.title = paper.title
         job.total = paper.n_units
+        usage.count = paper.n_units
 
         # High-res page rasters let figure questions read the actual drawn structures
         # (substituents, subscripts, MCQ structures) instead of guessing. Best-effort:
@@ -114,6 +127,9 @@ def _run(
         job.status = "error"
         job.error = str(exc)
         job.message = "Failed."
+    finally:
+        gemini_client.clear_proxy_context()
+        usage.flush()
 
 
 def start_job(
@@ -123,13 +139,23 @@ def start_job(
     subject: str,
     board: str,
     include_sources: bool,
+    google_token: str,
 ) -> Job:
     job = Job(id=uuid.uuid4().hex)
     with _LOCK:
         _JOBS[job.id] = job
     threading.Thread(
         target=_run,
-        args=(job, paper_path, language, class_level, subject, board, include_sources),
+        args=(
+            job,
+            paper_path,
+            language,
+            class_level,
+            subject,
+            board,
+            include_sources,
+            google_token,
+        ),
         daemon=True,
     ).start()
     return job

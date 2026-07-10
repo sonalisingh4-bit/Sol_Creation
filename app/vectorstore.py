@@ -10,7 +10,9 @@ callers.
 from __future__ import annotations
 
 import json
+import re
 import threading
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +23,7 @@ from . import config
 _VEC_FILE = config.INDEX_DIR / "vectors.npy"
 _META_FILE = config.INDEX_DIR / "meta.json"
 _SRC_FILE = config.INDEX_DIR / "sources.json"
+_TOKEN_RE = re.compile(r"[^\W\d_]{2,}|\d+", re.UNICODE)
 
 
 @dataclass
@@ -35,6 +38,10 @@ def _normalise(mat: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     return mat / norms
+
+
+def _tokens(text: str) -> Counter[str]:
+    return Counter(_TOKEN_RE.findall((text or "").lower()))
 
 
 class VectorStore:
@@ -191,6 +198,48 @@ class VectorStore:
                     metadata=self._meta[i],
                 )
                 for i in idx
+            ]
+
+    def query_text(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        subject: str | None = None,
+        class_level: str | None = None,
+        board: str | None = None,
+    ) -> list[Hit]:
+        q = _tokens(query)
+        if not q:
+            return []
+        q_terms = set(q)
+        with self._lock:
+            scored: list[tuple[float, int]] = []
+            for i, m in enumerate(self._meta):
+                if subject and m.get("subject") != subject:
+                    continue
+                if class_level and m.get("class_level") != class_level:
+                    continue
+                if board and m.get("board") not in (board, None):
+                    continue
+                doc = _tokens(m.get("text", ""))
+                if not doc:
+                    continue
+                overlap = sum(min(q[t], doc[t]) for t in q_terms & set(doc))
+                if overlap <= 0:
+                    continue
+                coverage = overlap / max(sum(q.values()), 1)
+                density = overlap / max(sum(doc.values()), 1)
+                scored.append((coverage + density, i))
+            scored.sort(reverse=True)
+            return [
+                Hit(
+                    text=self._meta[i]["text"],
+                    source=self._meta[i]["source"],
+                    score=float(score),
+                    metadata=self._meta[i],
+                )
+                for score, i in scored[:top_k]
             ]
 
     def sources(self) -> list[dict]:

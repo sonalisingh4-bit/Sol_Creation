@@ -27,6 +27,7 @@ Options:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -41,7 +42,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app import config, drive_sync, extract  # noqa: E402
+import pw_access  # noqa: E402
+from app import config, drive_sync, extract, gemini_client  # noqa: E402
 from app.ingest import ingest_file  # noqa: E402
 from app.vectorstore import get_store  # noqa: E402
 
@@ -139,15 +141,33 @@ def main() -> None:
     parser.add_argument("--fresh", action="store_true",
                         help="Delete the local cache first so Drive deletions/renames "
                              "propagate (automatic when DRIVE_API_KEY is set)")
+    parser.add_argument("--google-token", default=os.getenv("PW_GOOGLE_TOKEN", ""),
+                        help="Whitelisted Google token for proxy OCR during scanned/image ingestion")
     args = parser.parse_args()
-    build(
-        args.folder,
-        skip_download=args.skip_download,
-        keep=args.keep,
-        limit=args.limit,
-        dry_run=args.dry_run,
-        fresh=args.fresh,
-    )
+    session = None
+    if args.google_token:
+        if not pw_access.check_allowed(args.google_token):
+            sys.exit("Not authorized for this app.")
+        session = pw_access.UsageSession(
+            args.google_token,
+            filename="knowledge-base-build",
+            input_unit="No. of files",
+            count=args.limit,
+        )
+        gemini_client.set_proxy_context(args.google_token, session)
+    try:
+        build(
+            args.folder,
+            skip_download=args.skip_download,
+            keep=args.keep,
+            limit=args.limit,
+            dry_run=args.dry_run,
+            fresh=args.fresh,
+        )
+    finally:
+        if session is not None:
+            gemini_client.clear_proxy_context()
+            session.flush()
 
 
 if __name__ == "__main__":

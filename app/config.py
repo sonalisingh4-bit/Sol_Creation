@@ -8,14 +8,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- API / models ---------------------------------------------------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_PARSE_MODEL = os.getenv("GEMINI_PARSE_MODEL", "gemini-2.5-flash")
-GEMINI_GEN_MODEL = os.getenv("GEMINI_GEN_MODEL", "gemini-2.5-pro")
-GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
-GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "32768"))
-# gemini-embedding-001 supports Matryoshka dims (768/1536/3072). 1536 is a good
-# quality/footprint balance; embeddings are normalised before cosine search.
+# --- Access / models ------------------------------------------------------
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+APP_SESSION_DAYS = int(os.getenv("APP_SESSION_DAYS", "7"))
+GEMINI_PARSE_MODEL = os.getenv("PW_PARSE_MODEL", "gemini-2.5-flash")
+GEMINI_GEN_MODEL = os.getenv("PW_GEN_MODEL", "gemini-2.5-pro")
+GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("PW_MAX_OUTPUT_TOKENS", "32768"))
+# Local lexical vectors are only for the non-AI knowledge-base index.
 EMBED_DIM = int(os.getenv("EMBED_DIM", "1536"))
 
 # --- Retrieval ------------------------------------------------------------
@@ -106,11 +105,3 @@ SUBJECTS: dict[str, str] = {
     "Social Science": "Social Science / SST",
     "English": "English",
 }
-
-
-def require_api_key() -> str:
-    if not GEMINI_API_KEY:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Copy .env to .env and add your key."
-        )
-    return GEMINI_API_KEY

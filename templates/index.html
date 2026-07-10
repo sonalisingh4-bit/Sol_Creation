@@ -6,23 +6,25 @@
   <title>Solution Creation Tool</title>
   <link rel="stylesheet" href="/static/css/style.css"/>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  {% if google_client_id %}
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  {% endif %}
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="logo">📝</span>
+    <span class="logo">SC</span>
     <div>
       <h1>Solution Creation Tool</h1>
-      <p>Upload a question paper — get the complete solution document. Any class, any board, NEET &amp; JEE.</p>
+      <p>Upload a question paper and generate a complete solution document.</p>
     </div>
   </div>
 </header>
 
-{% if not has_key %}
+{% if not google_client_id %}
 <div class="banner warn">
-  ⚠️ <strong>GEMINI_API_KEY is not set.</strong> Copy <code>.env.example</code> to
-  <code>.env</code>, add your key from
-  <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>, and restart.
+  <strong>Google sign-in is not configured.</strong> Set <code>GOOGLE_CLIENT_ID</code>
+  in <code>.env</code> so users can sign in before generating.
 </div>
 {% endif %}
 
@@ -30,13 +32,23 @@
   <section class="card">
     {% include "_kb_status.html" %}
 
-    <form hx-post="/generate" hx-target="#result" hx-swap="innerHTML"
-          hx-encoding="multipart/form-data">
+    <form id="generate-form" hx-post="/generate" hx-target="#result" hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          data-google-client-id="{{ google_client_id }}"
+          data-session-days="{{ session_days }}">
+      <input type="hidden" name="google_token" id="google-token"/>
+
+      <div class="auth-box">
+        <div id="google-signin"></div>
+        <div id="auth-status" class="auth-status">Sign in with your @pw.live account.</div>
+        <button type="button" id="sign-out-btn" class="btn link" hidden>Sign out</button>
+      </div>
+
       <label class="dropzone" id="paper-drop">
         <input type="file" name="paper" id="paper-input" required
                accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"/>
-        <span id="paper-label">📄 Drag &amp; drop or click to choose the question paper</span>
-        <small>PDF, DOCX, TXT or photo — scanned papers are read automatically</small>
+        <span id="paper-label">Drag and drop or click to choose the question paper</span>
+        <small>PDF, DOCX, TXT or photo. Scanned papers are read automatically.</small>
       </label>
 
       <div class="field-row">
@@ -84,14 +96,14 @@
         Mention the reference books used in each answer
       </label>
 
-      <button type="submit" class="btn primary">✨ Generate solution document</button>
+      <button type="submit" class="btn primary" id="generate-btn" disabled>Generate solution document</button>
     </form>
 
     <div id="result"></div>
   </section>
 </main>
 
-<footer class="foot">Powered by Gemini · answers are AI-generated — review before use.</footer>
+<footer class="foot">Powered by PW proxy. Answers are AI-generated; review before use.</footer>
 <script src="/static/js/main.js"></script>
 </body>
 </html>

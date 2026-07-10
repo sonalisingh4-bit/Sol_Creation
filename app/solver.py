@@ -483,18 +483,19 @@ def _retrieve(
     store = get_store()
     if store.count() == 0:
         return "", []
-    emb = gemini_client.embed_texts([query], is_query=True)[0]
     subj = subject if subject and subject != "General" else None
     cls = class_level.strip() if class_level and class_level.strip() else None
     brd = board.strip() if board and board.strip() else None
-    hits: list[Hit] = store.query(emb, top_k, subject=subj, class_level=cls, board=brd)
+    hits: list[Hit] = store.query_text(
+        query, top_k, subject=subj, class_level=cls, board=brd
+    )
     # Board/class are narrowing filters, never a reason to answer with no
     # references: fall back to the whole board's subject material, then to the
     # subject across boards, before giving up.
     if not hits and cls:
-        hits = store.query(emb, top_k, subject=subj, class_level=None, board=brd)
+        hits = store.query_text(query, top_k, subject=subj, class_level=None, board=brd)
     if not hits and brd:
-        hits = store.query(emb, top_k, subject=subj, class_level=None, board=None)
+        hits = store.query_text(query, top_k, subject=subj, class_level=None, board=None)
     context = "\n\n---\n\n".join(f"[Source: {h.source}]\n{h.text}" for h in hits)
     sources: list[str] = []
     for h in hits:

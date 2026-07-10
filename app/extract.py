@@ -52,17 +52,15 @@ def _extract_docx(path: Path) -> str:
 
 def _ocr_generate(uploaded) -> str:
     """Use Gemini multimodal to read a scanned PDF or an image."""
-    from .gemini_client import get_client
     from . import config
-    from google.genai import types
 
-    client = get_client()
-    resp = client.models.generate_content(
+    return gemini_client.generate_text(
+        _OCR_PROMPT,
         model=config.GEMINI_PARSE_MODEL,
-        contents=[uploaded, _OCR_PROMPT],
-        config=types.GenerateContentConfig(temperature=0.0),
+        system="You are a meticulous OCR transcriber.",
+        temperature=0.0,
+        attachments=[uploaded],
     )
-    return (resp.text or "").strip()
 
 
 def extract_text(path: str | Path) -> str:
