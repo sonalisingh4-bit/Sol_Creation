@@ -53,6 +53,19 @@ def _request_google_token(request: Request, form_token: str = "") -> str:
     return ""
 
 
+def _job_error_response(
+    request: Request, error: str, *, status_code: int = 400
+) -> HTMLResponse:
+    # HTMX does not swap 4xx responses by default, so return the error panel as
+    # a normal fragment for form submissions while preserving status codes for
+    # direct/non-HTMX callers.
+    if request.headers.get("hx-request", "").lower() == "true":
+        status_code = 200
+    return templates.TemplateResponse(
+        "_job_error.html", {"request": request, "error": error}, status_code=status_code
+    )
+
+
 # --- pages ----------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
@@ -91,15 +104,24 @@ async def generate(
 ):
     name = paper.filename or "paper"
     if not extract.is_supported(name):
-        ctx = {"request": request, "error": f"Unsupported question-paper type: {name}"}
-        return templates.TemplateResponse("_job_error.html", ctx)
+        return _job_error_response(
+            request, f"Unsupported question-paper type: {name}", status_code=400
+        )
     token = _request_google_token(request, google_token)
-    if not pw_access.check_allowed(token):
-        ctx = {
-            "request": request,
-            "error": "Not authorized for this app. Sign in with a whitelisted @pw.live account.",
-        }
-        return templates.TemplateResponse("_job_error.html", ctx, status_code=403)
+    access_status = pw_access.check_allowed_status(token)
+    if access_status != "allowed":
+        if not token:
+            error = "Sign in with your @pw.live account before generating."
+        elif access_status == "denied":
+            error = (
+                "Your sign-in expired or this @pw.live account is not whitelisted "
+                "for Solution Creation. Sign in again and retry."
+            )
+        else:
+            error = (
+                "Could not verify your PW access right now. Please retry in a moment."
+            )
+        return _job_error_response(request, error, status_code=403)
     saved = _save_upload(paper, config.UPLOAD_DIR)
     subject = subject if subject in config.SUBJECTS else "General"
     board = board if board in config.BOARDS else ""

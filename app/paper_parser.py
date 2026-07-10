@@ -60,6 +60,7 @@ Analyse this question paper and return its full structure as JSON.
 
 Rules:
 - Extract EVERY question and sub-question, in order, preserving the original numbering (1, 2, Q3, i, ii, a, b ...).
+- Extract ONLY what is actually printed on the paper. Do NOT invent, add, duplicate, split or merge questions, and do NOT create a question from a heading, section title ("Section A"), general instruction line, marks table, page number, or watermark. Every question and sub-part you output MUST correspond to one a reader can point to on the paper — producing an extra entry with no matching question on the paper is a serious error. When unsure whether a fragment is a real question, leave it out rather than invent one.
 - Every question and sub-question MUST have its full "text" copied verbatim from the paper. NEVER leave "text" empty, null, or abbreviated — if a part is present in the paper, its text must be present here.
 - This applies to FIGURE-BASED sub-parts too. If a sub-part is mostly a drawn structure/reaction (a "[FIGURE]" appears in the transcription), still put its surrounding words, labels, reagents, conditions and product letters in "text" — e.g. "(x) CH₃CH₂CH₂Cl + NaI --(acetone, heat)--> A" or "(z) [FIGURE] + HCl --> D". A sub-part that exists in the paper must never have empty text.
 - Include every "অথবা"/"OR" alternative as its own sub-part (e.g. number "a (OR)"), with its full text.

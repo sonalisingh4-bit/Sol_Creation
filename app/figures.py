@@ -13,18 +13,20 @@ caption text, so a malformed figure never breaks generation.
 """
 from __future__ import annotations
 
+import base64
 import json
+import math
 import re
 from io import BytesIO
 
-from . import chem_render
+from . import chem_render, optics_render, physics_render
 
 # Block form: opening tag, body, then a close. The close is tolerant — models
 # listing many structures often omit [[/FIG]], so a body also ends at the next
 # [[FIG ...]] opener or at end-of-text. The explicit [[/FIG]] terminator still
 # keeps JSON bodies (which contain ']' and even ']]') safe when it is present.
 DIRECTIVE_RE = re.compile(
-    r"\[\[\s*FIG\s+(MOL|RXN|PLOT|CIRCUIT|FLOW|DIAGRAM)\s*\]\]"  # opener
+    r"\[\[\s*FIG\s+(MOL|RXN|PLOT|CIRCUIT|FLOW|DIAGRAM|OPTICS|FBD|IMG|PAPER|MAGNET|EYE)\s*\]\]"  # opener
     r"\s*(.*?)\s*"                                              # body (lazy)
     r"(?:\[\[\s*/\s*FIG\s*\]\]|(?=\[\[\s*FIG\b)|\Z)",           # close | next opener | end
     re.IGNORECASE | re.DOTALL,
@@ -33,7 +35,8 @@ DIRECTIVE_RE = re.compile(
 # Embed width (inches) per figure type.
 WIDTH = {
     "MOL": 2.6, "RXN": 4.8, "PLOT": 5.0,
-    "CIRCUIT": 4.2, "FLOW": 5.3, "DIAGRAM": 4.6,
+    "CIRCUIT": 4.2, "FLOW": 5.3, "DIAGRAM": 4.6, "OPTICS": 5.2,
+    "FBD": 3.6, "IMG": 4.8, "MAGNET": 4.8, "EYE": 5.4,
 }
 
 try:
@@ -280,6 +283,83 @@ def _diagram_png(spec: dict) -> bytes | None:
     return _fig_png(fig)
 
 
+# --- FBD (matplotlib) — free-body / force diagram --------------------------
+_FBD_DIRS = {
+    "up": 90, "down": 270, "left": 180, "right": 0,
+    "up-right": 45, "up-left": 135, "down-right": -45, "down-left": -135,
+    "north": 90, "south": 270, "east": 0, "west": 180,
+    "ne": 45, "nw": 135, "se": -45, "sw": -135,
+}
+
+
+def _fbd_png(spec: dict) -> bytes | None:
+    """Draw a free-body diagram: labelled force arrows from a central body, each
+    arrow's length proportional to its magnitude. The model supplies named forces
+    with a direction (cardinal word or an angle in degrees, CCW from the +x axis)
+    and an optional magnitude — never coordinates."""
+    if not _MPL:
+        return None
+    resolved = []
+    for f in spec.get("forces") or []:
+        if not isinstance(f, dict):
+            continue
+        ang = f.get("angle")
+        if ang is None:
+            ang = _FBD_DIRS.get(str(f.get("dir", "")).strip().lower().replace(" ", "-"))
+        if ang is None:
+            continue
+        try:
+            mag = abs(float(f.get("mag", 1) or 1)) or 1.0
+        except (TypeError, ValueError):
+            mag = 1.0
+        name = str(f.get("name") or f.get("label") or "").strip()
+        resolved.append((math.radians(float(ang)), mag, name))
+    if not resolved:
+        return None
+
+    maxmag = max(m for _, m, _ in resolved) or 1.0
+    fig, ax = plt.subplots(figsize=(4.4, 4.2), dpi=140)
+    body = str(spec.get("body", "block")).lower()
+    if body in ("circle", "particle", "ball"):
+        ax.add_patch(mpatches.Circle((0, 0), 0.16, fc="#e8edf5", ec="#1a1a1a", lw=1.5))
+    elif body in ("dot", "point"):
+        ax.plot([0], [0], "o", color="#1a1a1a", ms=8)
+    else:
+        ax.add_patch(mpatches.Rectangle((-0.22, -0.16), 0.44, 0.32,
+                                        fc="#e8edf5", ec="#1a1a1a", lw=1.5))
+    max_len, min_len = 1.0, 0.4
+    for ang, mag, name in resolved:
+        r = min_len + (max_len - min_len) * (mag / maxmag)
+        cx, cy = math.cos(ang), math.sin(ang)
+        ax.annotate("", xy=(r * cx, r * cy), xytext=(0, 0),
+                    arrowprops=dict(arrowstyle="-|>", color="#1a1a1a", lw=2.2))
+        if name:
+            ha = "left" if cx > 0.3 else "right" if cx < -0.3 else "center"
+            va = "bottom" if cy > 0.3 else "top" if cy < -0.3 else "center"
+            ax.text((r + 0.08) * cx, (r + 0.08) * cy, name, fontsize=9.5,
+                    color="#1a1a1a", ha=ha, va=va)
+    lim = max_len + 0.5
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    return _fig_png(fig)
+
+
+# --- IMG — an already-rendered image (base64 PNG/JPEG) ---------------------
+# Not model-facing: the solver injects [[FIG IMG]] when it crops a figure out of
+# the uploaded question paper (see figure_crop.resolve_paper_directives), so a
+# given diagram is reused verbatim instead of redrawn.
+def _img_png(spec: dict) -> bytes | None:
+    data = spec.get("data")
+    if not isinstance(data, str) or not data:
+        return None
+    try:
+        return base64.b64decode(data, validate=False)
+    except Exception:  # noqa: BLE001 - malformed base64
+        return None
+
+
 def render_match(match: "re.Match") -> tuple[bytes | None, str, str]:
     """Return (png_or_None, kind, caption) for a [[FIG ...]] directive match."""
     kind = match.group(1).upper()
@@ -309,6 +389,16 @@ def render_match(match: "re.Match") -> tuple[bytes | None, str, str]:
                 png = _flow_png(spec)
             elif kind == "DIAGRAM":
                 png = _diagram_png(spec)
+            elif kind == "OPTICS":
+                png = optics_render.render(spec)
+            elif kind == "FBD":
+                png = _fbd_png(spec)
+            elif kind == "IMG":
+                png = _img_png(spec)
+            elif kind == "MAGNET":
+                png = physics_render.magnet(spec)
+            elif kind == "EYE":
+                png = physics_render.eye(spec)
         except Exception:  # noqa: BLE001 - never let a bad figure crash generation
             png = None
     # On failure keep only a real caption. A generic "(diagram figure)" placeholder

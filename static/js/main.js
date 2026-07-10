@@ -117,11 +117,22 @@
     localStorage.removeItem(storageKey);
   }
 
+  function tokenExpired(token, skewSeconds) {
+    const claims = parseJwt(token);
+    const exp = Number(claims.exp || 0);
+    if (!exp) return true;
+    return Date.now() >= (exp - (skewSeconds || 60)) * 1000;
+  }
+
   function setSignedIn(token, savedAt) {
     const claims = parseJwt(token);
     const email = String(claims.email || "").toLowerCase();
     if (!email.endsWith("@pw.live")) {
       setSignedOut("Use a @pw.live Google account.");
+      return;
+    }
+    if (tokenExpired(token)) {
+      setSignedOut("Your sign-in expired. Sign in again before generating.");
       return;
     }
     tokenInput.value = token;
@@ -139,6 +150,10 @@
       const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
       if (!saved || !saved.token || Date.now() - Number(saved.savedAt || 0) > maxAgeMs) {
         setSignedOut();
+        return;
+      }
+      if (tokenExpired(saved.token)) {
+        setSignedOut("Your sign-in expired. Sign in again before generating.");
         return;
       }
       setSignedIn(saved.token, saved.savedAt);
@@ -179,12 +194,24 @@
     if (!tokenInput.value) {
       event.preventDefault();
       setSignedOut("Sign in before generating.");
+      return;
+    }
+    if (tokenExpired(tokenInput.value)) {
+      event.preventDefault();
+      setSignedOut("Your sign-in expired. Sign in again before generating.");
     }
   });
 
   document.body.addEventListener("htmx:configRequest", (event) => {
     if (event.target === form && tokenInput.value) {
       event.detail.headers.Authorization = "Bearer " + tokenInput.value;
+    }
+  });
+
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.detail.target && event.detail.target.id === "result" && event.detail.xhr.status >= 400) {
+      event.detail.shouldSwap = true;
+      event.detail.isError = false;
     }
   });
 })();

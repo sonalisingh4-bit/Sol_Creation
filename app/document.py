@@ -47,6 +47,8 @@ _LTX_WORDS = {
     r"\rightarrow": "→", r"\to": "→", r"\times": "×", r"\cdot": "·", r"\pm": "±",
     r"\Rightarrow": "⇒", r"\left": "", r"\right": "", r"\,": " ", r"\ ": " ",
 }
+_SUPERSCRIPT = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
+_SUBSCRIPT = str.maketrans("0123456789+-", "₀₁₂₃₄₅₆₇₈₉₊₋")
 
 
 def _read_braced(text: str, start: int) -> tuple[str, int] | None:
@@ -105,6 +107,16 @@ def _replace_latex_groups(text: str) -> str:
 def _clean_ad_hoc_math(text: str) -> str:
     """Repair common non-LaTeX math fragments so raw tokens never reach students."""
     text = re.sub(
+        r"(?<=[A-Za-z0-9)\]])\s+le\s+(?=[A-Za-z0-9(\[])",
+        " ≤ ",
+        text,
+    )
+    text = re.sub(
+        r"(?<=[A-Za-z0-9)\]])\s+ge\s+(?=[A-Za-z0-9(\[])",
+        " ≥ ",
+        text,
+    )
+    text = re.sub(
         r"\bint_([^\s^]+)\^\(([^)]+)\)",
         lambda m: f"∫_{m.group(1)}^({m.group(2)})",
         text,
@@ -131,6 +143,31 @@ def _clean_ad_hoc_math(text: str) -> str:
     text = re.sub(
         r"(sin⁻¹|cos⁻¹|tan⁻¹)\s*√\(([^()]+)\)/\(([^()]+)\)",
         lambda m: f"{m.group(1)}√({m.group(2)}/({m.group(3)}))",
+        text,
+    )
+    text = re.sub(
+        r"\^\{([0-9+-]{1,3})\}",
+        lambda m: m.group(1).translate(_SUPERSCRIPT),
+        text,
+    )
+    text = re.sub(
+        r"\^([0-9+-]{1,3})",
+        lambda m: m.group(1).translate(_SUPERSCRIPT),
+        text,
+    )
+    text = re.sub(
+        r"_\{([0-9+-]{1,3})\}",
+        lambda m: m.group(1).translate(_SUBSCRIPT),
+        text,
+    )
+    text = re.sub(
+        r"_([0-9+-]{1,3})",
+        lambda m: m.group(1).translate(_SUBSCRIPT),
+        text,
+    )
+    text = re.sub(
+        r"\(([A-Za-z0-9α-ωΑ-Ωθπ+\-]+)\)/\(([A-Za-z0-9α-ωΑ-Ωθπ+\-]+)\)",
+        r"\1/\2",
         text,
     )
     return text

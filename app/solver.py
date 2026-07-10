@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import config, gemini_client, page_images
+from . import config, figure_crop, gemini_client, page_images
 from .paper_parser import ParsedPaper, Question, SubPart
 from .vectorstore import Hit, get_store
 
@@ -163,7 +163,22 @@ Supported TYPE and body:
     List elements in loop order; the directions trace the circuit (e.g. right, right, down, left, up to close a rectangle).
 - FLOW — a flowchart / block diagram (extraction steps, process flow). Body: JSON
     {"nodes":[{"id":"a","label":".."}],"edges":[{"from":"a","to":"b","label":".."}],"direction":"TB|LR","caption":".."}
-- DIAGRAM — a generic labelled diagram (ray diagram, free-body diagram, vectors, geometry). Body: JSON
+- OPTICS — a ray diagram for ONE thin lens or spherical mirror. Give the PHYSICS, not coordinates: the system solves the lens/mirror equation and draws the correct, fully labelled ray diagram (object, image, F, 2F/C, principal axis, image nature). Body: JSON
+    {"element":"convex_lens|concave_lens|concave_mirror|convex_mirror","focal_length":15,"object_distance":25,"object_height":5,"caption":".."}
+    Use POSITIVE magnitudes in cm; the object is taken to be on the left. ALWAYS use OPTICS (never DIAGRAM) for a lens or mirror ray diagram — it computes the rays correctly, whereas hand-placed coordinates do not.
+- FBD — a free-body / force diagram. Body: JSON
+    {"body":"block|circle|dot","forces":[{"name":"Weight mg","dir":"down","mag":2},{"name":"Normal N","dir":"up","mag":2},{"name":"Friction f","dir":"left","mag":1},{"name":"Applied F","dir":"right","mag":1.5}],"caption":".."}
+    Each force has a name, a direction ("up"/"down"/"left"/"right"/"up-right"/… or "angle" in degrees measured CCW from the +x axis) and an optional "mag" (the arrow length is drawn proportional to it). Use FBD — not DIAGRAM — for any force or free-body diagram.
+- MAGNET — a magnetic field pattern. Body: JSON
+    {"kind":"bar|wire|solenoid","current":"out|in","caption":".."}
+    "bar" draws a bar magnet's N–S dipole field; "wire" the field around a straight current-carrying conductor (set "current" to "out" or "in" for the current's direction through the page — the circles are drawn by the right-hand rule); "solenoid" a solenoid's field with labelled N and S ends. Use MAGNET for any magnetic-field question.
+- EYE — a human-eye ray diagram for a vision defect and its correction. Body: JSON
+    {"defect":"normal|myopia|hypermetropia","corrected":true,"caption":".."}
+    Draws the eye lens, retina and the focused rays: myopia focuses in FRONT of the retina (corrected with a concave lens), hypermetropia BEHIND it (corrected with a convex lens). Set "corrected" to true to also draw the correcting lens. Use EYE for eye-defect questions.
+- PAPER — REUSE a figure that is already printed in the question paper (a given circuit, graph, map, data table or labelled diagram) rather than redrawing it. Body: JSON
+    {"page":2,"bbox":[left,top,right,bottom],"caption":".."}
+    page is the 1-based page of the paper; bbox locates the figure as fractions of that page (0 = left/top, 1 = right/bottom). Use PAPER ONLY when the paper actually SHOWS the figure and you can see it on the attached page image, and box just that figure (a little margin is fine). When the answer needs a NEW figure the paper does not contain (e.g. a ray diagram you must draw), use OPTICS/FBD/MAGNET/EYE/DIAGRAM instead — never PAPER.
+- DIAGRAM — a generic labelled diagram for cases the types above cannot express (vectors, geometry, a simple labelled sketch). Body: JSON
     {"shapes":[{"type":"line|arrow|circle|rect|point|label","x1":0,"y1":0,"x2":0,"y2":0,"cx":0,"cy":0,"r":0,"x":0,"y":0,"w":0,"h":0,"text":"..","label":".."}],"caption":".."}
     Use x1,y1,x2,y2 for line/arrow; cx,cy,r for circle; x,y,w,h for rect; x,y(+label) for point; x,y,text for label.
 
@@ -172,6 +187,7 @@ Rules for figures:
 - A bare SMILES, formula or caption on its own line does NOT become a figure — you MUST wrap it in the [[FIG TYPE]] ... [[/FIG]] tags exactly as shown, or it will appear as raw text. Never write a SMILES string or a figure caption on its own without the tags.
 - Give correct numbers, structures and connectivity — these render EXACTLY as specified.
 - Keep labels inside figures short and in Latin script/symbols/numbers (axis names, R1, t, [R], A, B) even when the rest of the answer is in another language, so they render cleanly.
+- LABEL every part a textbook diagram would label — a bare or half-labelled figure loses marks. Mark the object/image and rays, normal and angles on an optics diagram; each component and its value on a circuit; every force and its direction on a free-body diagram; each named part on apparatus or a biology sketch; the axes and key points on a graph. Prefer a correctly and fully labelled figure over an elaborate but unlabelled one.
 - Use a figure only when the question actually calls for one; plain text needs no figure.
 - For a figure that none of the TYPEs above can express (e.g. a realistic lab-apparatus sketch), briefly describe it in words instead — do not attempt to draw it.'''
 
@@ -187,6 +203,7 @@ _MATH_INSTRUCTIONS = r'''MATHEMATICS — write ALL mathematics as LaTeX:
 - NEVER write maths as plain ASCII or ad-hoc notation: no "^(3/2)", no "∫(a)^(b)" for limits, no bare "sqrt", no "a/b" typed inline for a real fraction. NEVER wrap maths (or anything) in backticks.
 - NEVER write bare tokens such as "frac√2937", "int_0^(π/2)", "sin^(-1)√x/(a+x)" or "√x/a+x". Use valid LaTeX instead: $\frac{\sqrt{293}}{7}$, $\int_{0}^{\pi/2}$, $\sin^{-1}\sqrt{\frac{x}{a+x}}$.
 - For inverse-trigonometric functions and roots, put the whole intended argument inside braces. For example write $\sin^{-1}\sqrt{\frac{x}{a+x}}$, not $\sin^{-1}\sqrt{x}/(a+x)$; write $\tan^{-1}\sqrt{\frac{x}{a}}$, not $\tan^{-1}\sqrt{x}/a$.
+- If the question uses a specific inverse-trigonometric form, keep that form in the final answer when possible. Equivalent substitutions may use another form in the working, but convert the final line back to the question's form, e.g. finalise $\int \sin^{-1}\sqrt{\frac{x}{a+x}}\,dx$ as $(a+x)\sin^{-1}\sqrt{\frac{x}{a+x}}-\sqrt{ax}+C$ rather than an equivalent $\tan^{-1}$ form.
 - Never put words or prose (in any language) inside $...$ — the delimiters hold ONLY mathematical notation; keep all prose outside them.
 - For a magnitude, modulus or absolute value, use \left| ... \right| (e.g. $\left|\vec{a}\right|$, $\cos\theta = \frac{\vec{a}\cdot\vec{b}}{\left|\vec{a}\right|\left|\vec{b}\right|}$), not bare | ... | bars.
 - Keep each $$...$$ on a SINGLE line with ONE equation. For a multi-step derivation, put each step on its own line as its own $$...$$.
@@ -217,24 +234,33 @@ _SUBJECT_STYLE: dict[str, str] = {
         "bound, not a target."
     ),
     "Physics": (
-        "Answer in EXAM ANSWER-WRITING style. State the relevant law or principle and "
-        "the formula used, substitute the given values WITH THEIR UNITS, carry units "
-        "through the working, and give the final numerical answer with the correct unit "
-        "and sensible significant figures. Show each working step as an equation. Add a "
-        "brief conceptual justification only where the question asks for it, and use a "
-        "labelled diagram (ray diagram, circuit, free-body) where it genuinely aids the "
-        "answer. Be concise — do not pad with textbook explanation. Treat any word-count "
-        "guidance as a loose upper bound, not a target."
+        "Answer in EXAM ANSWER-WRITING style, CRISP and sized to the marks. State the "
+        "relevant law or principle and the formula used, substitute the given values "
+        "WITH THEIR UNITS, carry units through the working, and give the final numerical "
+        "answer with the correct unit and sensible significant figures. Show each working "
+        "step as an equation. Add a brief conceptual justification only where the question "
+        "asks for it. When a diagram helps (ray diagram, circuit, free-body, field lines), "
+        "draw it as a figure the way the textbook does and LABEL every relevant part — for "
+        "optics: the object, image, incident/refracted/reflected rays, the normal and the "
+        "angles i and r, and the pole/focus/centre; for circuits: each component and its "
+        "value; for a free-body diagram: every force with its direction; and mark the sign "
+        "convention where one applies. Never leave a diagram bare or half-labelled, and add "
+        "a one-line note of what it shows. Be concise: do not pad with textbook exposition, "
+        "and keep the length within what the marks warrant."
     ),
     "Chemistry": (
-        "Answer in EXAM ANSWER-WRITING style suited to the question type. For reactions: "
-        "give BALANCED equations with correct formulae, name the reaction where relevant "
-        "(e.g. Finkelstein, Cannizzaro, Fries) and write reagents/conditions over the "
-        "arrow. For structures or mechanisms: give correct structures and IUPAC names, "
-        "drawn as [[FIG MOL]]/[[FIG RXN]] figures with the product ALSO named in words. "
-        "For numerical parts: state the formula, substitute with units, and give the "
-        "final value with its unit. For descriptive parts: be concise, correct and to "
-        "the point. Do not over-explain."
+        "Answer in EXAM ANSWER-WRITING style suited to the question type, CRISP and sized "
+        "to the marks. For reactions: write the correct reactant and product FORMULAE "
+        "first, then BALANCE the equation — verify every atom and the charge balance "
+        "before moving on — and add the state symbols and the reagents/conditions over "
+        "the arrow; name the reaction where relevant (e.g. Finkelstein, Cannizzaro, "
+        "Fries). Getting this opening equation right is essential: a wrong or unbalanced "
+        "first equation invalidates the whole answer, so double-check it. For structures "
+        "or mechanisms: give correct structures and IUPAC names, drawn as "
+        "[[FIG MOL]]/[[FIG RXN]] figures with the product ALSO named in words. For "
+        "numerical parts: state the formula, substitute with units, and give the final "
+        "value with its unit. For descriptive parts: be concise, correct and to the "
+        "point. Do not over-explain or pad beyond what the marks warrant."
     ),
     "Biology": (
         "Answer in EXAM ANSWER-WRITING style for biology — answers are DESCRIPTIVE and "
@@ -291,27 +317,33 @@ def _marks_guidance(marks: float | None) -> str:
     if marks is None:
         return (
             "No marks are specified. Write a complete, well-structured answer "
-            "appropriate to the question's depth."
+            "appropriate to the question's depth, and no longer than it needs to be."
         )
     m = float(marks)
     if m <= 1:
-        return "This is a 1-mark question: answer in one or two precise sentences."
+        return (
+            "This is a 1-mark question: answer in one or two precise sentences — the key "
+            "fact, value or term only, with no extra explanation."
+        )
     if m <= 3:
         return (
             f"This is a {marks}-mark question: write a focused short answer of about "
-            f"{int(m * 40)}-{int(m * 60)} words covering the key points."
+            f"{int(m * 40)}-{int(m * 60)} words covering exactly the points the marks "
+            "reward. Treat that range as an upper bound — be crisp and do not pad."
         )
     if m <= 6:
         return (
             f"This is a {marks}-mark question: write a detailed answer (~{int(m * 40)}-"
             f"{int(m * 60)} words) with the main points clearly explained, an example "
-            "where useful, and correct terminology."
+            "where useful, and correct terminology. Cover roughly one substantive point "
+            "per mark and stop there — do not exceed what the marks warrant."
         )
     return (
         f"This is a {marks}-mark long answer: write a comprehensive, well-organised "
         f"response (~{int(m * 35)}-{int(m * 55)} words) using headings or numbered "
         "points, definitions, explanation, steps/derivation or a described diagram, "
-        "and examples as appropriate."
+        "and examples as appropriate. Match the depth to the marks — thorough, but not "
+        "padded beyond what earns them."
     )
 
 
@@ -437,8 +469,17 @@ def _build_prompt(
         "the target-language word, not a foreign-script one. The only Latin-script "
         "text allowed is standard formulae, equations, chemical/mathematical symbols, "
         "and universally-used technical terms or proper nouns, as conventionally "
-        "written. Do not restate the question, do not add headings like 'Answer:'. "
+        "written. If the selected language is English, every explanatory sentence must "
+        "be English; do not copy Bengali/Hindi/other-language prose from the question "
+        "or sources into the answer. Do not restate the question, do not add headings like 'Answer:'. "
         "Output only the answer content."
+    )
+    parts.append(
+        "The question text can be OCR'd or bilingual, so mathematical notation may have "
+        "missing fraction bars or spacing. Infer the standard board-level intent from "
+        "the visible question/page image and solve it cleanly. Do not add caveats such "
+        "as 'the question is not generally correct' or 'the relation is wrong' unless "
+        "the question explicitly asks you to identify an error."
     )
     parts.append(_FIGURE_INSTRUCTIONS)
     # Typeset-maths (LaTeX) instructions only for quantitative subjects; Biology/General
@@ -668,6 +709,11 @@ def _answer_unit(
             answer = _generate(temp)
             if len(answer.strip()) >= _MIN_ANSWER_CHARS:
                 break
+    # If the model chose to reuse a figure printed in the paper, crop it out of the
+    # page image now (we have the rasters here) and inline it. Only meaningful for
+    # figure questions, where the page was actually shown to the model.
+    if attachments is not None and paper_pages:
+        answer = figure_crop.resolve_paper_directives(answer, paper_pages)
     return answer, sources
 
 
