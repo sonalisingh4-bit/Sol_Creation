@@ -1,10 +1,11 @@
 """In-memory background job manager for the (slow) generation pipeline."""
 from __future__ import annotations
 
+import json
 import re
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pw_access
@@ -36,11 +37,49 @@ class Job:
 
 _JOBS: dict[str, Job] = {}
 _LOCK = threading.Lock()
+_JOB_ID_RE = re.compile(r"^[a-fA-F0-9]{32}$")
 
 
 def get_job(job_id: str) -> Job | None:
     with _LOCK:
-        return _JOBS.get(job_id)
+        job = _JOBS.get(job_id)
+        if job is not None:
+            return job
+    return _load_job(job_id)
+
+
+def _job_path(job_id: str) -> Path | None:
+    if not _JOB_ID_RE.fullmatch(job_id):
+        return None
+    return config.JOB_DIR / f"{job_id}.json"
+
+
+def _job_data(job: Job) -> dict:
+    return {name: getattr(job, name) for name in Job.__dataclass_fields__}
+
+
+def _save_job(job: Job) -> None:
+    path = _job_path(job.id)
+    if path is None:
+        return
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(_job_data(job), ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_job(job_id: str) -> Job | None:
+    path = _job_path(job_id)
+    if path is None or not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        allowed = {name: data.get(name) for name in Job.__dataclass_fields__}
+        job = Job(**allowed)
+    except Exception:  # noqa: BLE001 - a bad cache file should behave like a missing job
+        return None
+    with _LOCK:
+        _JOBS[job.id] = job
+    return job
 
 
 def _safe_stem(name: str) -> str:
@@ -129,6 +168,11 @@ def _run(
         job.message = "Failed."
     finally:
         gemini_client.clear_proxy_context()
+        if job.status in {"done", "error"}:
+            try:
+                _save_job(job)
+            except OSError:
+                pass
         usage.flush()
 
 

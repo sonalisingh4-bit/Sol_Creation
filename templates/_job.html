@@ -7,9 +7,9 @@
   {% elif job.status == "done" %}
     <div class="flash ok"><strong>✅ Solutions ready</strong>{% if job.title %} — {{ job.title }}{% endif %}</div>
     <div class="downloads">
-      <a class="btn primary" href="/download/{{ job.id }}/docx">⬇️ Download .docx</a>
+      <a class="btn primary" href="/download/{{ job.id }}/docx" hx-boost="false">⬇️ Download .docx</a>
       {% if job.pdf_name %}
-      <a class="btn" href="/download/{{ job.id }}/pdf">⬇️ Download .pdf</a>
+      <a class="btn" href="/download/{{ job.id }}/pdf" hx-boost="false">⬇️ Download .pdf</a>
       {% endif %}
     </div>
     {% if job.pdf_note %}<p class="muted small">ℹ️ {{ job.pdf_note }}</p>{% endif %}

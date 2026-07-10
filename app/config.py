@@ -29,8 +29,9 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "outputs"
 INDEX_DIR = DATA_DIR / "index"
 KB_CACHE_DIR = DATA_DIR / "kb_cache"  # downloaded Drive sources (never committed)
+JOB_DIR = DATA_DIR / "jobs"  # completed job metadata for download links
 
-for _d in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, INDEX_DIR, KB_CACHE_DIR):
+for _d in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, INDEX_DIR, KB_CACHE_DIR, JOB_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # --- Knowledge base from Google Drive --------------------------------------
