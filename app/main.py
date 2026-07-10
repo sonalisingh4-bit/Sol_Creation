@@ -104,6 +104,8 @@ async def generate(
     subject = subject if subject in config.SUBJECTS else "General"
     board = board if board in config.BOARDS else ""
     class_level = class_level if class_level in config.CLASSES else ""
+    if class_level in {"NEET", "JEE"}:
+        board = ""
     job = jobs.start_job(
         saved, language, class_level, subject, board, include_sources == "on", token
     )

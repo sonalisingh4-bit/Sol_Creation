@@ -400,6 +400,8 @@ def ensure_index_async() -> None:
 # UI summary
 # ---------------------------------------------------------------------------
 def _class_sort_key(class_level: str | None) -> tuple[int, str]:
+    if class_level == "Class 11+12":
+        return (11, "+12")
     if class_level and class_level.startswith("Class "):
         try:
             return (int(class_level.split()[1]), "")

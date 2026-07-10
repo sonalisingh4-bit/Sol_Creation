@@ -416,10 +416,15 @@ def _build_prompt(
         parts.append(_subject_style(subject))
     if class_level or board:
         level = " ".join(x for x in (board, class_level) if x)
+        if board:
+            convention = "that level and board's syllabus/answer conventions"
+        elif class_level in {"NEET", "JEE"}:
+            convention = f"the {class_level} exam pattern and expected depth"
+        else:
+            convention = "that level's syllabus and answer conventions"
         parts.append(
-            f"The student is at this level: {level}. Pitch the depth, vocabulary, "
-            "examples and rigour to that level and board's syllabus/answer "
-            "conventions — thorough enough to score full marks, but neither "
+            f"The paper is for this level: {level}. Pitch the depth, vocabulary, "
+            f"examples and rigour to {convention} - thorough enough to score full marks, but neither "
             "over-advanced nor over-simplified."
         )
     parts.append(grounding)
@@ -472,6 +477,36 @@ class SolvedPaper:
     board: str | None = None
 
 
+_COMBINED_CLASS_LEVELS: dict[str, tuple[str, ...]] = {
+    "Class 11+12": ("Class 11", "Class 12"),
+}
+
+
+def _query_level_hits(
+    query: str,
+    top_k: int,
+    *,
+    subject: str | None,
+    class_level: str | None,
+    board: str | None,
+) -> list[Hit]:
+    store = get_store()
+    levels = _COMBINED_CLASS_LEVELS.get(class_level or "", (class_level,))
+    hits: list[Hit] = []
+    seen: set[tuple[str, int | None]] = set()
+    for level in levels:
+        for hit in store.query_text(
+            query, top_k, subject=subject, class_level=level, board=board
+        ):
+            key = (hit.metadata.get("source_id") or hit.source, hit.metadata.get("chunk_index"))
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append(hit)
+    hits.sort(key=lambda hit: hit.score, reverse=True)
+    return hits[:top_k]
+
+
 def _retrieve(
     query: str,
     top_k: int,
@@ -486,7 +521,7 @@ def _retrieve(
     subj = subject if subject and subject != "General" else None
     cls = class_level.strip() if class_level and class_level.strip() else None
     brd = board.strip() if board and board.strip() else None
-    hits: list[Hit] = store.query_text(
+    hits = _query_level_hits(
         query, top_k, subject=subj, class_level=cls, board=brd
     )
     # Board/class are narrowing filters, never a reason to answer with no

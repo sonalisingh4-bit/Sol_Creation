@@ -31,7 +31,8 @@ Set these values in `.env`:
 
 On first start, the app downloads the knowledge base in the background if
 `KB_INDEX_URL` is set. Users sign in with a whitelisted `@pw.live` Google
-account, upload the paper, choose class/board/subject/language, then generate.
+account, upload the paper, choose course or exam level, subject, language, and
+school board when relevant, then generate.
 
 ## Admin Knowledge Base
 

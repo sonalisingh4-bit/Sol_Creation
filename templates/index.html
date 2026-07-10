@@ -16,7 +16,7 @@
     <span class="logo">SC</span>
     <div>
       <h1>Solution Creation Tool</h1>
-      <p>Upload a question paper and generate a complete solution document.</p>
+      <p>Upload a school, NEET, or JEE paper and generate a complete solution document.</p>
     </div>
   </div>
 </header>
@@ -53,18 +53,25 @@
 
       <div class="field-row">
         <div class="field">
-          <label for="class_level">Class / Exam</label>
+          <label for="class_level">Course / exam level</label>
           <select name="class_level" id="class_level">
-            <option value="">Any / Not sure</option>
-            {% for value, label in classes.items() %}
+            <option value="">Any / detect from paper</option>
+            <optgroup label="School classes">
+            {% for value, label in classes.items() if value not in ("NEET", "JEE") %}
             <option value="{{ value }}">{{ label }}</option>
             {% endfor %}
+            </optgroup>
+            <optgroup label="Entrance exams">
+            {% for value, label in classes.items() if value in ("NEET", "JEE") %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+            </optgroup>
           </select>
         </div>
-        <div class="field">
-          <label for="board">Board</label>
+        <div class="field" id="board-field">
+          <label for="board">School board</label>
           <select name="board" id="board">
-            <option value="">All boards</option>
+            <option value="">Any board</option>
             {% for value, label in boards.items() %}
             <option value="{{ value }}">{{ label }}</option>
             {% endfor %}

@@ -34,6 +34,53 @@
 })();
 
 (function () {
+  const level = document.getElementById("class_level");
+  const boardField = document.getElementById("board-field");
+  const board = document.getElementById("board");
+  const subject = document.getElementById("subject");
+  if (!level) return;
+
+  const subjectOptions = subject
+    ? Array.from(subject.options).map((option) => ({
+        option,
+        initiallyDisabled: option.disabled,
+      }))
+    : [];
+  const examSubjects = {
+    NEET: new Set(["General", "Physics", "Chemistry", "Biology"]),
+    JEE: new Set(["General", "Mathematics", "Physics", "Chemistry"]),
+  };
+
+  function updateSubjectChoices(allowed) {
+    if (!subject) return;
+    subjectOptions.forEach(({ option, initiallyDisabled }) => {
+      const shouldShow = !allowed || allowed.has(option.value);
+      option.hidden = !shouldShow;
+      option.disabled = initiallyDisabled || !shouldShow;
+    });
+    if (allowed && !allowed.has(subject.value)) {
+      const fallback = subjectOptions.find(
+        ({ option }) => allowed.has(option.value) && !option.disabled
+      );
+      if (fallback) subject.value = fallback.option.value;
+    }
+  }
+
+  function applyLevelRules() {
+    const entranceExam = level.value === "NEET" || level.value === "JEE";
+    if (boardField && board) {
+      boardField.hidden = entranceExam;
+      board.disabled = entranceExam;
+      if (entranceExam) board.value = "";
+    }
+    updateSubjectChoices(examSubjects[level.value]);
+  }
+
+  level.addEventListener("change", applyLevelRules);
+  applyLevelRules();
+})();
+
+(function () {
   const form = document.getElementById("generate-form");
   const tokenInput = document.getElementById("google-token");
   const status = document.getElementById("auth-status");
