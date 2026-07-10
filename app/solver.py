@@ -185,6 +185,8 @@ _MATH_INSTRUCTIONS = r'''MATHEMATICS — write ALL mathematics as LaTeX:
 - This covers EVERYTHING mathematical: fractions, powers, roots, integrals, limits, sums, derivatives, vectors, subscripts/superscripts, Greek letters, angles, and even a lone symbol like $\theta$, $x^2$, $\pi$, or a value like $60^\circ$.
 - Use standard LaTeX: \frac{a}{b}, \sqrt{...}, x^{2}, a_{1}, \int_{a}^{b}, \lim_{x \to 0}, \sum, \vec{a}, \hat{i}, \sin \cos \tan \cot \sec \log \ln, \sin^{-1}, \cos^{-1}, \theta \alpha \beta \pi \lambda \mu, \times \cdot \pm \leq \geq \neq \Rightarrow \rightarrow \infty, \left( ... \right), and ^\circ for degrees.
 - NEVER write maths as plain ASCII or ad-hoc notation: no "^(3/2)", no "∫(a)^(b)" for limits, no bare "sqrt", no "a/b" typed inline for a real fraction. NEVER wrap maths (or anything) in backticks.
+- NEVER write bare tokens such as "frac√2937", "int_0^(π/2)", "sin^(-1)√x/(a+x)" or "√x/a+x". Use valid LaTeX instead: $\frac{\sqrt{293}}{7}$, $\int_{0}^{\pi/2}$, $\sin^{-1}\sqrt{\frac{x}{a+x}}$.
+- For inverse-trigonometric functions and roots, put the whole intended argument inside braces. For example write $\sin^{-1}\sqrt{\frac{x}{a+x}}$, not $\sin^{-1}\sqrt{x}/(a+x)$; write $\tan^{-1}\sqrt{\frac{x}{a}}$, not $\tan^{-1}\sqrt{x}/a$.
 - Never put words or prose (in any language) inside $...$ — the delimiters hold ONLY mathematical notation; keep all prose outside them.
 - For a magnitude, modulus or absolute value, use \left| ... \right| (e.g. $\left|\vec{a}\right|$, $\cos\theta = \frac{\vec{a}\cdot\vec{b}}{\left|\vec{a}\right|\left|\vec{b}\right|}$), not bare | ... | bars.
 - Keep each $$...$$ on a SINGLE line with ONE equation. For a multi-step derivation, put each step on its own line as its own $$...$$.
@@ -479,7 +481,20 @@ class SolvedPaper:
 
 _COMBINED_CLASS_LEVELS: dict[str, tuple[str, ...]] = {
     "Class 11+12": ("Class 11", "Class 12"),
+    "NEET": ("Class 11", "Class 12"),
+    "JEE": ("Class 11", "Class 12"),
 }
+
+
+def _retrieval_levels(class_level: str | None) -> tuple[str | None, ...]:
+    if not class_level:
+        return (None,)
+    return _COMBINED_CLASS_LEVELS.get(class_level, (class_level,))
+
+
+def _strict_level_filter(class_level: str | None) -> bool:
+    levels = set(_retrieval_levels(class_level))
+    return bool(levels & {"Class 11", "Class 12"})
 
 
 def _query_level_hits(
@@ -491,7 +506,7 @@ def _query_level_hits(
     board: str | None,
 ) -> list[Hit]:
     store = get_store()
-    levels = _COMBINED_CLASS_LEVELS.get(class_level or "", (class_level,))
+    levels = _retrieval_levels(class_level)
     hits: list[Hit] = []
     seen: set[tuple[str, int | None]] = set()
     for level in levels:
@@ -505,6 +520,20 @@ def _query_level_hits(
             hits.append(hit)
     hits.sort(key=lambda hit: hit.score, reverse=True)
     return hits[:top_k]
+
+
+def _display_sources(hits: list[Hit], class_level: str | None, board: str | None) -> list[str]:
+    levels = {level for level in _retrieval_levels(class_level) if level}
+    sources: list[str] = []
+    for hit in hits:
+        meta = hit.metadata or {}
+        if levels and meta.get("class_level") not in levels:
+            continue
+        if board and meta.get("board") not in (board, None):
+            continue
+        if hit.source not in sources:
+            sources.append(hit.source)
+    return sources
 
 
 def _retrieve(
@@ -524,19 +553,19 @@ def _retrieve(
     hits = _query_level_hits(
         query, top_k, subject=subj, class_level=cls, board=brd
     )
-    # Board/class are narrowing filters, never a reason to answer with no
-    # references: fall back to the whole board's subject material, then to the
-    # subject across boards, before giving up.
-    if not hits and cls:
+    if not hits and cls and brd:
+        hits = _query_level_hits(
+            query, top_k, subject=subj, class_level=cls, board=None
+        )
+    # Board/class are narrowing filters for lower-school content. For Class 11/12
+    # and entrance papers, do not cite lower-class books as references: if no
+    # level-appropriate material exists, answer from subject knowledge instead.
+    if not hits and cls and not _strict_level_filter(cls):
         hits = store.query_text(query, top_k, subject=subj, class_level=None, board=brd)
     if not hits and brd:
         hits = store.query_text(query, top_k, subject=subj, class_level=None, board=None)
     context = "\n\n---\n\n".join(f"[Source: {h.source}]\n{h.text}" for h in hits)
-    sources: list[str] = []
-    for h in hits:
-        if h.source not in sources:
-            sources.append(h.source)
-    return context, sources
+    return context, _display_sources(hits, cls, brd)
 
 
 def _has_or_alternative(q: Question) -> bool:

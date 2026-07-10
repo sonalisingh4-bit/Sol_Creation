@@ -49,14 +49,105 @@ _LTX_WORDS = {
 }
 
 
+def _read_braced(text: str, start: int) -> tuple[str, int] | None:
+    if start >= len(text) or text[start] != "{":
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : i], i + 1
+    return None
+
+
+def _skip_ws(text: str, i: int) -> int:
+    while i < len(text) and text[i].isspace():
+        i += 1
+    return i
+
+
+def _replace_latex_groups(text: str) -> str:
+    r"""Readable fallback for nested LaTeX like \frac{\sqrt{x}}{7}."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        if text.startswith(r"\frac", i):
+            j = _skip_ws(text, i + len(r"\frac"))
+            num = _read_braced(text, j)
+            if num is not None:
+                den = _read_braced(text, _skip_ws(text, num[1]))
+                if den is not None:
+                    out.append(
+                        f"({_replace_latex_groups(num[0])})/({_replace_latex_groups(den[0])})"
+                    )
+                    i = den[1]
+                    continue
+        if text.startswith(r"\sqrt", i):
+            j = _skip_ws(text, i + len(r"\sqrt"))
+            if j < len(text) and text[j] == "[":
+                end = text.find("]", j + 1)
+                if end != -1:
+                    j = _skip_ws(text, end + 1)
+            body = _read_braced(text, j)
+            if body is not None:
+                out.append(f"√({_replace_latex_groups(body[0])})")
+                i = body[1]
+                continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+
+def _clean_ad_hoc_math(text: str) -> str:
+    """Repair common non-LaTeX math fragments so raw tokens never reach students."""
+    text = re.sub(
+        r"\bint_([^\s^]+)\^\(([^)]+)\)",
+        lambda m: f"∫_{m.group(1)}^({m.group(2)})",
+        text,
+    )
+    text = re.sub(
+        r"\bint_([^\s^]+)\^\{([^}]+)\}",
+        lambda m: f"∫_{m.group(1)}^({m.group(2)})",
+        text,
+    )
+    text = re.sub(r"\bint_", "∫_", text)
+    for fn in ("sin", "cos", "tan", "cot", "sec", "cosec"):
+        text = re.sub(rf"\b{fn}\^\(-1\)", f"{fn}⁻¹", text)
+        text = re.sub(rf"\b{fn}\^-1", f"{fn}⁻¹", text)
+    text = re.sub(
+        r"\bfrac\s*√\s*([A-Za-z0-9]+?)([0-9])\b",
+        lambda m: f"(√{m.group(1)})/({m.group(2)})",
+        text,
+    )
+    text = re.sub(
+        r"\bfrac\s*([A-Za-z0-9]+)\s*/\s*([A-Za-z0-9]+)\b",
+        lambda m: f"({m.group(1)})/({m.group(2)})",
+        text,
+    )
+    text = re.sub(
+        r"(sin⁻¹|cos⁻¹|tan⁻¹)\s*√\(([^()]+)\)/\(([^()]+)\)",
+        lambda m: f"{m.group(1)}√({m.group(2)}/({m.group(3)}))",
+        text,
+    )
+    return text
+
+
 def _delatex(text: str) -> str:
+    text = _replace_latex_groups(text)
     text = _LTX_ARROW.sub(lambda m: f" →({m.group(1).strip()}) " if m.group(1).strip() else " → ", text)
     text = _LTX_FRAC.sub(r"(\1)/(\2)", text)
     text = _LTX_TEXT.sub(r"\1", text)
     for k, v in _LTX_WORDS.items():
         text = text.replace(k, v)
+    for fn in ("sin", "cos", "tan", "cot", "sec", "cosec", "log", "ln"):
+        text = text.replace(rf"\{fn}^{{-1}}", f"{fn}⁻¹")
+        text = text.replace(rf"\{fn}", fn)
     text = _LTX_INLINE.sub(r"\1", text)  # drop $...$ delimiters, keep the content
-    return text
+    return _clean_ad_hoc_math(text)
 
 
 # --- Math ------------------------------------------------------------------
@@ -89,14 +180,15 @@ _LTX_ANYCMD = re.compile(r"\\([a-zA-Z]+)")
 def _latex_to_text(latex: str) -> str:
     """Readable plain-text rendering of a LaTeX fragment — the fallback used only
     when native equation rendering is unavailable or a fragment won't convert."""
-    s = _LTX_FRAC.sub(r"(\1)/(\2)", latex)
+    s = _replace_latex_groups(latex)
+    s = _LTX_FRAC.sub(r"(\1)/(\2)", s)
     for k, v in _LTX_FALLBACK.items():
         s = s.replace(k, v)
     s = re.sub(r"\^\{([^{}]*)\}", r"^(\1)", s)   # ^{...} -> ^(...)
     s = re.sub(r"_\{([^{}]*)\}", r"_\1", s)       # _{...} -> _...
     s = re.sub(r"\\[a-zA-Z]+\{([^{}]*)\}", r"\1", s)  # \hat{i} etc -> i
     s = _LTX_ANYCMD.sub(r"\1", s)                  # \sin -> sin, drop stray commands
-    return s.replace("{", "").replace("}", "").strip()
+    return _clean_ad_hoc_math(s.replace("{", "").replace("}", "")).strip()
 
 
 def _join_multiline_math(text: str) -> str:
@@ -132,7 +224,11 @@ def _append_equation(paragraph, latex: str) -> bool:
     be rendered (no Office stylesheet, or LaTeX the converter rejects)."""
     el = mathrender.latex_to_omath(latex)
     if el is None:
-        return False
+        png = mathrender.latex_to_png(latex)
+        if png is None:
+            return False
+        paragraph.add_run().add_picture(BytesIO(png), height=Pt(16))
+        return True
     paragraph._p.append(el)
     return True
 

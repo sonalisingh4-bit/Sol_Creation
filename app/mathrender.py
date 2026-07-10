@@ -13,6 +13,7 @@ just without typeset equations.
 """
 from __future__ import annotations
 
+from io import BytesIO
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -140,3 +141,37 @@ def latex_to_omath(latex: str):
     if xml is None:
         return None
     return parse_xml(xml)
+
+
+def _mathtext_latex(latex: str) -> str:
+    """Small compatibility pass for Matplotlib's built-in math renderer."""
+    s = (latex or "").strip()
+    s = s.replace(r"\dfrac", r"\frac").replace(r"\tfrac", r"\frac")
+    s = s.replace(r"\left", "").replace(r"\right", "")
+    s = s.replace(r"\operatorname", r"\mathrm")
+    return s
+
+
+@lru_cache(maxsize=512)
+def latex_to_png(latex: str) -> bytes | None:
+    """Render LaTeX-ish math to a transparent PNG using Matplotlib mathtext.
+
+    Render/hosted Linux machines usually do not have Microsoft Office's
+    MML2OMML.XSL, so native Word equations are unavailable there. Matplotlib's
+    mathtext renderer gives us a dependency-free fallback that still looks like
+    real math in the generated .docx.
+    """
+    latex = _mathtext_latex(latex)
+    if not latex:
+        return None
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        from matplotlib.mathtext import math_to_image
+
+        buf = BytesIO()
+        math_to_image(f"${latex}$", buf, dpi=220, format="png")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 - fall back to readable text in caller
+        return None
