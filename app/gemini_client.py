@@ -9,6 +9,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -19,6 +20,14 @@ from . import config
 _MAX_RETRIES = 4
 _TOKEN_RE = re.compile(r"[^\W\d_]{2,}|\d+", re.UNICODE)
 _CTX = threading.local()
+
+# The proxy runs on Vercel, which rejects request bodies over ~4.5 MB with a 413
+# FUNCTION_PAYLOAD_TOO_LARGE. Keep the total inline (base64) image data under this
+# budget. Only OVER-budget requests get their images downscaled — a normal-size paper
+# is sent untouched, so its quality is unaffected — and never below _MIN_IMG_WIDTH, so
+# small subscripts and drawn structures stay legible.
+_MAX_INLINE_B64 = 3_600_000
+_MIN_IMG_WIDTH = 1000
 
 
 class GeminiJSONError(ValueError):
@@ -170,6 +179,62 @@ def _text_from_result(result: Any) -> str:
     return ""
 
 
+def _downscale_jpeg_b64(data_b64: str, scale: float) -> str | None:
+    """Re-encode a base64 image at `scale`x its width as JPEG. Returns the new base64,
+    or None on failure or if it would not get smaller. Width never drops below
+    _MIN_IMG_WIDTH, so fine detail (subscripts, ring substituents) stays readable."""
+    try:
+        from PIL import Image
+
+        img = Image.open(BytesIO(base64.b64decode(data_b64))).convert("RGB")
+        w, h = img.size
+        new_w = max(_MIN_IMG_WIDTH, int(w * scale))
+        if new_w >= w:
+            return None
+        img = img.resize((new_w, max(1, round(h * new_w / w))))
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=82)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:  # noqa: BLE001 - Pillow missing / undecodable; leave as-is
+        return None
+
+
+def _fit_payload(request: dict[str, Any]) -> dict[str, Any]:
+    """Keep a request's inline image data under the proxy's payload budget. Acts ONLY
+    when over budget, and ONLY on images — so ordinary requests pass through unchanged
+    (no quality loss); an oversized batch is shrunk just enough to fit, never below the
+    legibility floor. Mutates and returns `request`."""
+    images = [
+        part["inlineData"]
+        for content in request.get("contents", [])
+        for part in content.get("parts", [])
+        if isinstance(part, dict)
+        and isinstance(part.get("inlineData"), dict)
+        and str(part["inlineData"].get("mimeType", "")).startswith("image/")
+    ]
+    if not images:
+        return request
+    # Iterate: JPEG size doesn't scale exactly with pixel area, so one pass can
+    # undershoot. Shrink toward the budget until it fits or every image is at the
+    # legibility floor (then we stop — the per-page OCR path never reaches here, so the
+    # quality-critical transcription is never downscaled).
+    for _ in range(6):
+        total = sum(len(img.get("data", "")) for img in images)
+        if total <= _MAX_INLINE_B64:
+            break
+        scale = (_MAX_INLINE_B64 / total) ** 0.5 * 0.95  # slightly aggressive
+        changed = False
+        for img in images:
+            smaller = _downscale_jpeg_b64(img.get("data", ""), scale)
+            if smaller:
+                img["data"] = smaller
+                img["mimeType"] = "image/jpeg"
+                changed = True
+        if not changed:  # every image already at the floor — can't shrink further
+            break
+    return request
+
+
 def _proxy_generate(
     *,
     model: str,
@@ -182,7 +247,7 @@ def _proxy_generate(
         pw_access.gemini_generate,
         _token(),
         model=model,
-        request=request,
+        request=_fit_payload(request),
         filename=filename,
         input_unit=input_unit,
         count=count,

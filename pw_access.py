@@ -154,11 +154,12 @@ class UsageSession:
 
     def flush(self):
         """Write ONE combined Usage Cost row for the whole task. When the task used
-        more than one model, their names, input tokens, output tokens and costs are
-        shown in that single row separated by ' / ', in the same left-to-right order —
-        e.g. model 'gemini-2.5-flash / gemini-2.5-pro' with tokens '5000 / 6500',
-        '800 / 2700' and cost '2.5 / 17.0'. Returns the proxy response, or None if
-        nothing was accumulated. Call once, at the end of the task."""
+        more than one model, the model names and the input/output tokens are shown in
+        that single row separated by ' / ', in the same left-to-right order — e.g. model
+        'gemini-2.5-flash / gemini-2.5-pro' with tokens '5000 / 6500' and '800 / 2700'.
+        cost_inr is the NUMERIC TOTAL for the task (the sheet's cost cell is numeric and
+        cannot render a slashed string, so per-model costs are summed here). Returns the
+        proxy response, or None if nothing was accumulated. Call once, at task end."""
         if not self._by_model:
             return None
         keys = list(self._by_model.keys())
@@ -168,7 +169,7 @@ class UsageSession:
             "model": sep.join(keys),
             "tokens_in": sep.join(str(v["tokens_in"]) for v in vals),
             "tokens_out": sep.join(str(v["tokens_out"]) for v in vals),
-            "cost_inr": sep.join(str(round(v["cost_inr"], 4)) for v in vals),
+            "cost_inr": round(sum(v["cost_inr"] for v in vals), 4),
         }
         self._by_model = {}
         return log_usage(self.token, filename=self.filename, input_unit=self.input_unit,

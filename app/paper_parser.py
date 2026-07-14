@@ -250,27 +250,49 @@ def upload_if_multimodal(path: str | Path):
     return None
 
 
-def _ocr_paper(uploaded) -> str:
-    """Pass 1 — transcribe the whole paper to plain text (reliable on dense scans).
+_OCR_SYSTEM = (
+    "You are a meticulous OCR transcriber. You reproduce every character and never "
+    "skip content."
+)
 
-    The transcription model occasionally returns an empty response on a dense scan
-    (a transient safety/length blip). An empty transcription leaves the structuring
-    pass nothing to read, which surfaces to the user as "no questions detected", so
-    retry a few times before giving up — a real transcription is far longer than a
-    handful of characters."""
+
+def _ocr_attachment(attachment) -> str:
+    """Transcribe a single attachment (one page image, or the whole file when page
+    rendering is unavailable). Retries a few times because the model occasionally
+    returns an empty response on a dense scan — a real transcription is far longer
+    than a handful of characters."""
     text = ""
     for _ in range(3):
         text = gemini_client.generate_text(
             _OCR_INSTRUCTION,
             model=config.GEMINI_GEN_MODEL,  # the stronger model transcribes most completely
-            system="You are a meticulous OCR transcriber. You reproduce every character and never skip content.",
+            system=_OCR_SYSTEM,
             temperature=0.0,
-            attachments=[uploaded],
+            attachments=[attachment],
             max_output_tokens=config.GEMINI_MAX_OUTPUT_TOKENS,
         )
         if len(text.strip()) >= 40:
             return text
     return text
+
+
+def _ocr_paper(uploaded, path) -> str:
+    """Pass 1 — transcribe the whole paper to plain text (reliable on dense scans).
+
+    Transcribe PAGE BY PAGE at full render resolution rather than sending the whole PDF
+    (or every page) in one request. Each page is a small request, so a long or scanned
+    paper never exceeds the proxy's payload cap (a whole scanned PDF can, and 413s), and
+    nothing is ever downscaled — so transcription quality is fully preserved. The
+    explicit "=== Page N ===" markers keep page numbering correct for figure routing.
+    Falls back to a single whole-file request only when page rendering is unavailable."""
+    pngs = page_images.render_pages(path)
+    if not pngs:
+        return _ocr_attachment(uploaded)
+    pages = []
+    for i, png in enumerate(pngs, start=1):
+        part = gemini_client.image_part(png, mime_type=page_images.MIME)
+        pages.append(f"=== Page {i} ===\n{_ocr_attachment(part).strip()}")
+    return "\n\n".join(pages)
 
 
 def _embedded_pdf_text(path: Path) -> str:
@@ -309,7 +331,7 @@ def parse_paper(path: str | Path, *, uploaded=None) -> ParsedPaper:
     if multimodal:
         if uploaded is None:
             uploaded = gemini_client.upload_file(path)
-        paper_text = _embedded_pdf_text(path) or _ocr_paper(uploaded)
+        paper_text = _embedded_pdf_text(path) or _ocr_paper(uploaded, path)
     else:
         paper_text = extract.extract_text(path)
 
