@@ -298,7 +298,10 @@ _SUBJECT_STYLE: dict[str, str] = {
         "precise. For literature: answer with reference to the text — name the "
         "work/author where relevant and support points with brief evidence or quotes. "
         "For writing tasks (letter, essay, notice): follow the standard exam format "
-        "exactly. Match length to the marks; never pad."
+        "exactly. STRICTLY obey any word limit the question states (e.g. 'in about 100 "
+        "words', 'not more than 150 words', 'in 100-150 words') — count your words and "
+        "NEVER exceed it; if no limit is given, match the length to the marks. English "
+        "answers must be concise and to the point — never pad to fill space."
     ),
     "General": (
         "Answer in a clear, well-structured, exam-appropriate way: address exactly what "
@@ -313,37 +316,73 @@ def _subject_style(subject: str | None) -> str:
     return _SUBJECT_STYLE.get(subject or "General", _SUBJECT_STYLE["General"])
 
 
+# A word limit stated in the question — "in about 120 words", "not more than 150
+# words", "in 100-150 words", "(word limit: 200)". English answers in particular
+# must obey these; faculty flag answers that overshoot the paper's stated limit.
+_WORD_LIMIT_RE = re.compile(
+    r"(\d{1,4})\s*(?:-|–|—|to)\s*(\d{1,4})\s*words?"   # a range, e.g. 100-150 words
+    r"|(\d{1,4})\s*words?"                              # a single count, e.g. 120 words
+    r"|words?\s*limit\s*[:\-]?\s*(\d{1,4})"            # 'word limit: 120' / 'word limit 120'
+    r"|words?\s*[:\-]\s*(\d{1,4})",                     # 'words: 120' / 'word - 120'
+    re.IGNORECASE,
+)
+
+
+def _stated_word_limit(*texts: str | None) -> int | None:
+    """Return the word count the question states as a limit, or None. For a range
+    ('100-150 words') the upper bound is the limit; if several are mentioned the
+    largest (most lenient) wins so we never under-constrain a genuine answer."""
+    best: int | None = None
+    for t in texts:
+        if not t:
+            continue
+        for m in _WORD_LIMIT_RE.finditer(t):
+            hi = m.group(2) or m.group(1) or m.group(3) or m.group(4) or m.group(5)
+            try:
+                n = int(hi)
+            except (TypeError, ValueError):
+                continue
+            if 10 <= n <= 2000 and (best is None or n > best):
+                best = n
+    return best
+
+
 def _marks_guidance(marks: float | None) -> str:
+    # Examiners award marks point-by-point (or step-by-step), so the surest way to be
+    # BOTH complete and crisp is ~one distinct creditable point/step per mark: enough
+    # to earn every mark, nothing padded beyond them. Word bands are a secondary cap.
     if marks is None:
         return (
-            "No marks are specified. Write a complete, well-structured answer "
-            "appropriate to the question's depth, and no longer than it needs to be."
+            "No marks are shown for this question. Judge the depth from the question "
+            "itself and answer completely but concisely — cover what it asks and no more."
         )
     m = float(marks)
     if m <= 1:
         return (
-            "This is a 1-mark question: answer in one or two precise sentences — the key "
-            "fact, value or term only, with no extra explanation."
+            "This is a 1-mark question: give ONLY the key fact, value, term or final "
+            "result, in one or two precise sentences. No explanation or background."
         )
     if m <= 3:
         return (
-            f"This is a {marks}-mark question: write a focused short answer of about "
-            f"{int(m * 40)}-{int(m * 60)} words covering exactly the points the marks "
-            "reward. Treat that range as an upper bound — be crisp and do not pad."
+            f"This is a {marks}-mark question: give about {int(m)} distinct creditable "
+            f"points (or working steps) — roughly one per mark — in about {int(m * 30)}-"
+            f"{int(m * 50)} words. Cover exactly what earns the marks, then stop; be crisp "
+            "and do not pad."
         )
     if m <= 6:
         return (
-            f"This is a {marks}-mark question: write a detailed answer (~{int(m * 40)}-"
-            f"{int(m * 60)} words) with the main points clearly explained, an example "
-            "where useful, and correct terminology. Cover roughly one substantive point "
-            "per mark and stop there — do not exceed what the marks warrant."
+            f"This is a {marks}-mark question: give about {int(m)} distinct creditable "
+            f"points/steps (roughly one per mark), each explained briefly with correct "
+            f"terminology and an example only where it earns a mark, in about "
+            f"{int(m * 30)}-{int(m * 50)} words. Enough to score full marks — nothing "
+            "padded beyond them."
         )
     return (
-        f"This is a {marks}-mark long answer: write a comprehensive, well-organised "
-        f"response (~{int(m * 35)}-{int(m * 55)} words) using headings or numbered "
-        "points, definitions, explanation, steps/derivation or a described diagram, "
-        "and examples as appropriate. Match the depth to the marks — thorough, but not "
-        "padded beyond what earns them."
+        f"This is a {marks}-mark long answer: cover about {int(m)} distinct creditable "
+        f"points/steps (roughly one per mark) as numbered points or short headings, in "
+        f"about {int(m * 28)}-{int(m * 48)} words — definitions, explanation, "
+        "steps/derivation or a described diagram as the question needs. Thorough enough "
+        "for full marks, but never padded beyond what the marks reward."
     )
 
 
@@ -448,6 +487,17 @@ def _build_prompt(
     else:
         parts.append(_marks_guidance(marks))
         parts.append(_subject_style(subject))
+        # A word limit written in the question is a hard cap and overrides the
+        # marks-based length guidance above — faculty penalise answers that run over.
+        limit = _stated_word_limit(question_text, instruction, parent_text)
+        if limit:
+            parts.append(
+                f"STRICT WORD LIMIT: the question asks for an answer within {limit} "
+                f"words. Keep the ENTIRE answer at or under {limit} words — do NOT "
+                "exceed it. This limit overrides the general length guidance above: "
+                "write concisely, include only what the answer needs, and stop as soon "
+                "as it is complete. Mentally count the words and trim anything over."
+            )
     if class_level or board:
         level = " ".join(x for x in (board, class_level) if x)
         if board:
