@@ -153,18 +153,26 @@ class UsageSession:
         agg["cost_inr"] += float(cost_inr or 0.0)
 
     def flush(self):
-        """Write one row per provider used this task. Returns the proxy response,
-        or None if nothing was accumulated. Call once, at the end of the task."""
-        items = [
-            {"model": m, "tokens_in": v["tokens_in"], "tokens_out": v["tokens_out"],
-             "cost_inr": round(v["cost_inr"], 4)}
-            for m, v in self._by_model.items()
-        ]
-        self._by_model = {}
-        if not items:
+        """Write ONE combined Usage Cost row for the whole task. When the task used
+        more than one model, their names, input tokens, output tokens and costs are
+        shown in that single row separated by ' / ', in the same left-to-right order —
+        e.g. model 'gemini-2.5-flash / gemini-2.5-pro' with tokens '5000 / 6500',
+        '800 / 2700' and cost '2.5 / 17.0'. Returns the proxy response, or None if
+        nothing was accumulated. Call once, at the end of the task."""
+        if not self._by_model:
             return None
+        keys = list(self._by_model.keys())
+        vals = [self._by_model[k] for k in keys]
+        sep = " / "
+        item = {
+            "model": sep.join(keys),
+            "tokens_in": sep.join(str(v["tokens_in"]) for v in vals),
+            "tokens_out": sep.join(str(v["tokens_out"]) for v in vals),
+            "cost_inr": sep.join(str(round(v["cost_inr"], 4)) for v in vals),
+        }
+        self._by_model = {}
         return log_usage(self.token, filename=self.filename, input_unit=self.input_unit,
-                         count=self.count, items=items, app=self.app)
+                         count=self.count, items=[item], app=self.app)
 
 
 def gemini_generate(
@@ -201,7 +209,10 @@ def gemini_generate(
         raise PWAccessError(f"gemini proxy error {r.status_code}: {r.text[:300]}")
     data = r.json()
     if session is not None:
-        _accumulate(session, data, provider="Gemini")
+        # Log under the actual model name (gemini-2.5-flash / gemini-2.5-pro), not a
+        # generic "Gemini", so the Usage Cost sheet shows which model was used. Calls
+        # to the SAME model still collapse into one combined row per task.
+        _accumulate(session, data, provider=model)
     return data
 
 
