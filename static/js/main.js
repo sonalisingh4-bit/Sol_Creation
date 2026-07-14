@@ -109,6 +109,19 @@
     }
   }
 
+  function establishSession(token) {
+    // Exchange the verified Google token for an HttpOnly session cookie so job status
+    // and downloads are gated too, not just generation. Best-effort; silent on failure.
+    fetch("/auth/session", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+    }).catch(() => {});
+  }
+
+  function clearSession() {
+    fetch("/auth/logout", { method: "POST" }).catch(() => {});
+  }
+
   function setSignedOut(message) {
     tokenInput.value = "";
     submit.disabled = true;
@@ -143,6 +156,7 @@
       storageKey,
       JSON.stringify({ token, email, savedAt: savedAt || Date.now() })
     );
+    establishSession(token);
   }
 
   function restoreSession() {
@@ -162,7 +176,10 @@
     }
   }
 
-  signOut.addEventListener("click", () => setSignedOut());
+  signOut.addEventListener("click", () => {
+    clearSession();
+    setSignedOut();
+  });
   restoreSession();
 
   if (!clientId) {

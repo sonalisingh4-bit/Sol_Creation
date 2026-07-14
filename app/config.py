@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,10 @@ load_dotenv()
 # --- Access / models ------------------------------------------------------
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 APP_SESSION_DAYS = int(os.getenv("APP_SESSION_DAYS", "7"))
+# Secret used to sign the app's own session cookies. Set APP_SECRET_KEY in the
+# environment so sessions survive restarts and match across instances; if unset we
+# fall back to a random per-process key (safe, but restarting signs everyone out).
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip() or secrets.token_hex(32)
 GEMINI_PARSE_MODEL = os.getenv("PW_PARSE_MODEL", "gemini-2.5-flash")
 GEMINI_GEN_MODEL = os.getenv("PW_GEN_MODEL", "gemini-2.5-pro")
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("PW_MAX_OUTPUT_TOKENS", "32768"))

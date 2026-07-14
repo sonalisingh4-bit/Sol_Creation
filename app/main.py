@@ -11,13 +11,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import pw_access
 
-from . import config, drive_sync, extract, jobs
+from . import auth, config, drive_sync, extract, jobs
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -51,6 +51,34 @@ def _request_google_token(request: Request, form_token: str = "") -> str:
     if scheme.lower() == "bearer" and token.strip():
         return token.strip()
     return ""
+
+
+COOKIE_NAME = "sc_session"
+
+
+def _cookie_secure(request: Request) -> bool:
+    return (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    )
+
+
+def _set_session_cookie(response, request: Request, email: str) -> None:
+    """Attach the signed session cookie (HttpOnly, 7-day) to a response."""
+    response.set_cookie(
+        COOKIE_NAME,
+        auth.make_session(email),
+        max_age=config.APP_SESSION_DAYS * 86400,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request),
+        path="/",
+    )
+
+
+def _has_session(request: Request) -> bool:
+    """True only if the request carries a valid, unexpired signed session cookie."""
+    return auth.verify_session(request.cookies.get(COOKIE_NAME, "")) is not None
 
 
 def _job_error_response(
@@ -88,6 +116,27 @@ def kb_status(request: Request):
     return templates.TemplateResponse(
         "_kb_status.html", {"request": request, "kb": drive_sync.kb_summary()}
     )
+
+
+# --- auth (sign-in gate for the whole app) --------------------------------
+@app.post("/auth/session")
+def auth_session(request: Request):
+    """Establish a signed session AFTER verifying the Google token is a whitelisted
+    @pw.live account. Called by the frontend on sign-in. Fail closed: only 'allowed'
+    gets a session cookie; a denied/unverifiable token gets none (403)."""
+    token = _request_google_token(request, "")
+    if pw_access.check_allowed_status(token) != "allowed":
+        return JSONResponse({"ok": False, "error": "not_allowed"}, status_code=403)
+    resp = JSONResponse({"ok": True})
+    _set_session_cookie(resp, request, auth.email_from_google_token(token))
+    return resp
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(COOKIE_NAME, path="/")
+    return resp
 
 
 # --- generation -----------------------------------------------------------
@@ -131,11 +180,19 @@ async def generate(
     job = jobs.start_job(
         saved, language, class_level, subject, board, include_sources == "on", token
     )
-    return templates.TemplateResponse("_job.html", {"request": request, "job": job})
+    # A successful (whitelisted) generation also (re)establishes the session cookie, so
+    # the follow-up status polling and downloads are authenticated automatically.
+    resp = templates.TemplateResponse("_job.html", {"request": request, "job": job})
+    _set_session_cookie(resp, request, auth.email_from_google_token(token))
+    return resp
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_status(request: Request, job_id: str):
+    if not _has_session(request):
+        return _job_error_response(
+            request, "Your session expired. Please sign in again.", status_code=401
+        )
     job = jobs.get_job(job_id)
     if job is None:
         return templates.TemplateResponse(
@@ -145,7 +202,11 @@ def job_status(request: Request, job_id: str):
 
 
 @app.get("/download/{job_id}/{fmt}")
-def download(job_id: str, fmt: str):
+def download(request: Request, job_id: str, fmt: str):
+    if not _has_session(request):
+        return HTMLResponse(
+            "Sign in with a whitelisted @pw.live account to download.", status_code=401
+        )
     job = jobs.get_job(job_id)
     if job is None:
         return HTMLResponse("Unknown job.", status_code=404)
