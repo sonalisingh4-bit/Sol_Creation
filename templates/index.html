@@ -30,8 +30,6 @@
 
 <main class="grid single">
   <section class="card">
-    {% include "_kb_status.html" %}
-
     <form id="generate-form" hx-post="/generate" hx-target="#result" hx-swap="innerHTML"
           hx-encoding="multipart/form-data"
           data-google-client-id="{{ google_client_id }}"
@@ -40,9 +38,17 @@
 
       <div class="auth-box">
         <div id="google-signin"></div>
-        <div id="auth-status" class="auth-status">Sign in with your @pw.live account.</div>
+        <div id="auth-status" class="auth-status">Sign in with your @pw.live account to continue.</div>
         <button type="button" id="sign-out-btn" class="btn link" hidden>Sign out</button>
       </div>
+
+      <!-- Shown only when a signed-in account is NOT whitelisted on the sheet. -->
+      <div id="access-denied" class="flash err" hidden></div>
+
+      <!-- The whole tool stays hidden until the proxy confirms the account is
+           whitelisted; [hidden] is display:none so it never flashes pre-check. -->
+      <div id="tool-body" hidden>
+      {% include "_kb_status.html" %}
 
       <label class="dropzone" id="paper-drop">
         <input type="file" name="paper" id="paper-input" required
@@ -103,10 +109,11 @@
         Mention reference books used in each answer (review only)
       </label>
 
-      <button type="submit" class="btn primary" id="generate-btn" disabled>Generate solution document</button>
-    </form>
+      <button type="submit" class="btn primary" id="generate-btn">Generate solution document</button>
 
-    <div id="result"></div>
+      <div id="result"></div>
+      </div>
+    </form>
   </section>
 </main>
 

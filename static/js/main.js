@@ -87,6 +87,8 @@
   const submit = document.getElementById("generate-btn");
   const signOut = document.getElementById("sign-out-btn");
   const signInMount = document.getElementById("google-signin");
+  const toolBody = document.getElementById("tool-body");
+  const deniedBox = document.getElementById("access-denied");
   if (!form || !tokenInput || !status || !submit) return;
 
   const clientId = form.dataset.googleClientId || "";
@@ -109,13 +111,50 @@
     }
   }
 
-  function establishSession(token) {
-    // Exchange the verified Google token for an HttpOnly session cookie so job status
-    // and downloads are gated too, not just generation. Best-effort; silent on failure.
+  function setToolVisible(show) {
+    if (toolBody) toolBody.hidden = !show;
+    submit.disabled = !show;
+  }
+
+  function setDenied(message) {
+    if (!deniedBox) return;
+    deniedBox.textContent = message || "";
+    deniedBox.hidden = !message;
+  }
+
+  function verifyAndReveal(token, email) {
+    // Sign-in is not enough: ask the server to confirm this @pw.live account is on the
+    // whitelist sheet (and set the session cookie). Reveal the tool ONLY if allowed.
+    setToolVisible(false);
+    setDenied("");
+    status.textContent = "Checking your access…";
     fetch("/auth/session", {
       method: "POST",
       headers: { Authorization: "Bearer " + token },
-    }).catch(() => {});
+    })
+      .then((r) => {
+        if (r.ok) {
+          status.textContent = "Signed in as " + email;
+          setDenied("");
+          setToolVisible(true);
+        } else if (r.status === 403) {
+          status.textContent = "Access not allowed.";
+          setToolVisible(false);
+          setDenied(
+            "This account (" + email + ") is not whitelisted for Solution Creation. " +
+            "Ask the admin to add your @pw.live email to the access sheet, then sign in again."
+          );
+        } else {
+          status.textContent = "Could not verify your access right now. Please retry.";
+          setToolVisible(false);
+          setDenied("");
+        }
+      })
+      .catch(() => {
+        status.textContent = "Could not verify your access (network). Please retry.";
+        setToolVisible(false);
+        setDenied("");
+      });
   }
 
   function clearSession() {
@@ -125,9 +164,11 @@
   function setSignedOut(message) {
     tokenInput.value = "";
     submit.disabled = true;
-    status.textContent = message || "Sign in with your @pw.live account.";
+    status.textContent = message || "Sign in with your @pw.live account to continue.";
     signOut.hidden = true;
     localStorage.removeItem(storageKey);
+    setToolVisible(false);
+    setDenied("");
   }
 
   function tokenExpired(token, skewSeconds) {
@@ -149,14 +190,13 @@
       return;
     }
     tokenInput.value = token;
-    submit.disabled = false;
-    status.textContent = "Signed in as " + email;
     signOut.hidden = false;
     localStorage.setItem(
       storageKey,
       JSON.stringify({ token, email, savedAt: savedAt || Date.now() })
     );
-    establishSession(token);
+    // Reveal the tool only after the server confirms the account is whitelisted.
+    verifyAndReveal(token, email);
   }
 
   function restoreSession() {
