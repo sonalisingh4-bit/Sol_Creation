@@ -256,19 +256,40 @@ _OCR_SYSTEM = (
 )
 
 
-def _ocr_attachment(attachment) -> str:
-    """Transcribe a single attachment (one page image, or the whole file when page
-    rendering is unavailable). Retries a few times because the model occasionally
-    returns an empty response on a dense scan — a real transcription is far longer
-    than a handful of characters."""
+# Raw page bytes per OCR request. base64 inflates by ~4/3, so this keeps a batch under
+# the proxy's inline cap (see gemini_client._MAX_INLINE_B64) with headroom for the
+# prompt. Most papers fit in ONE batch — batching only kicks in for long/heavy scans,
+# so transcription stays a single fast call in the common case.
+_OCR_BATCH_RAW_BYTES = 2_400_000
+
+
+def _page_batches(pngs: list[bytes]):
+    """Yield (first_page_number, [page_png, ...]) groups that each fit one request."""
+    batch: list[bytes] = []
+    size = 0
+    start = 1
+    for i, png in enumerate(pngs, start=1):
+        if batch and size + len(png) > _OCR_BATCH_RAW_BYTES:
+            yield start, batch
+            batch, size, start = [], 0, i
+        batch.append(png)
+        size += len(png)
+    if batch:
+        yield start, batch
+
+
+def _ocr_attachments(attachments: list, instruction: str = _OCR_INSTRUCTION) -> str:
+    """Transcribe one request's worth of attachments. Retries a few times because the
+    model occasionally returns an empty response on a dense scan — a real transcription
+    is far longer than a handful of characters."""
     text = ""
     for _ in range(3):
         text = gemini_client.generate_text(
-            _OCR_INSTRUCTION,
+            instruction,
             model=config.GEMINI_GEN_MODEL,  # the stronger model transcribes most completely
             system=_OCR_SYSTEM,
             temperature=0.0,
-            attachments=[attachment],
+            attachments=attachments,
             max_output_tokens=config.GEMINI_MAX_OUTPUT_TOKENS,
         )
         if len(text.strip()) >= 40:
@@ -279,20 +300,33 @@ def _ocr_attachment(attachment) -> str:
 def _ocr_paper(uploaded, path) -> str:
     """Pass 1 — transcribe the whole paper to plain text (reliable on dense scans).
 
-    Transcribe PAGE BY PAGE at full render resolution rather than sending the whole PDF
-    (or every page) in one request. Each page is a small request, so a long or scanned
-    paper never exceeds the proxy's payload cap (a whole scanned PDF can, and 413s), and
-    nothing is ever downscaled — so transcription quality is fully preserved. The
-    explicit "=== Page N ===" markers keep page numbering correct for figure routing.
-    Falls back to a single whole-file request only when page rendering is unavailable."""
+    Send rendered page images (never the whole PDF inline — a scanned PDF can blow past
+    the proxy's payload cap and 413), grouped into as FEW requests as fit the cap. A
+    normal paper is one request, exactly as before; only a long/heavy scan splits into a
+    couple. Pages go at full render resolution and are never downscaled, so transcription
+    quality is preserved. Each batch is told its real page numbers so the "=== Page N ==="
+    markers stay correct for figure routing. Falls back to a single whole-file request
+    only when page rendering is unavailable."""
     pngs = page_images.render_pages(path)
     if not pngs:
-        return _ocr_attachment(uploaded)
-    pages = []
-    for i, png in enumerate(pngs, start=1):
-        part = gemini_client.image_part(png, mime_type=page_images.MIME)
-        pages.append(f"=== Page {i} ===\n{_ocr_attachment(part).strip()}")
-    return "\n\n".join(pages)
+        return _ocr_attachment_fallback(uploaded)
+    chunks = []
+    for start, batch in _page_batches(pngs):
+        parts = [gemini_client.image_part(p, mime_type=page_images.MIME) for p in batch]
+        last = start + len(batch) - 1
+        instruction = (
+            f"{_OCR_INSTRUCTION}\n\nThese {len(batch)} images are pages {start} to {last} "
+            f"of the paper, in order (the first image is page {start}). Begin each page's "
+            f"transcription with a line '=== Page N ===' using its REAL page number from "
+            "that range."
+        )
+        chunks.append(_ocr_attachments(parts, instruction))
+    return "\n\n".join(chunks)
+
+
+def _ocr_attachment_fallback(uploaded) -> str:
+    """Whole-file transcription, used only when page rendering is unavailable."""
+    return _ocr_attachments([uploaded])
 
 
 def _embedded_pdf_text(path: Path) -> str:
