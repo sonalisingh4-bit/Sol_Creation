@@ -1,6 +1,9 @@
 {% set running = job.status not in ("done", "error") %}
+{# hx-target="this" is REQUIRED: #result lives inside the form, and htmx inherits the
+   form's hx-target="#result". Without it the first poll swaps outerHTML onto #result,
+   deleting it, so the next poll can't resolve its target and polling silently stops. #}
 <div class="job {{ job.status }}"
-     {% if running %}hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:1.5s" hx-swap="outerHTML"{% endif %}>
+     {% if running %}hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:1.5s" hx-target="this" hx-swap="outerHTML"{% endif %}>
 
   {% if job.status == "error" %}
     <div class="flash err"><strong>Generation failed.</strong> {{ job.error }}</div>
