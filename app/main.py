@@ -6,6 +6,7 @@ at startup. Faculty only upload question papers.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,13 @@ from fastapi.templating import Jinja2Templates
 import pw_access
 
 from . import auth, config, drive_sync, extract, jobs
+
+# uvicorn only configures its own loggers, so without a root handler nothing the app
+# logs (notably background-job progress and tracebacks) ever reaches the host's log.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))

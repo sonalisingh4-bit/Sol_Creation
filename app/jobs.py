@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,11 @@ from pathlib import Path
 import pw_access
 
 from . import config, document, gemini_client, page_images, paper_parser, solver
+
+# Jobs run in a background thread, so an exception here never reaches the request log.
+# Log every stage (with timings) and the full traceback, otherwise a slow or crashed
+# job is invisible in production and the UI just sits on its last progress message.
+log = logging.getLogger("app.jobs")
 
 
 @dataclass
@@ -103,7 +110,13 @@ def _run(
         input_unit="No. of questions",
         count=None,
     )
+    started = time.monotonic()
+
+    def _stage(msg: str) -> None:
+        log.info("job %s [%6.1fs] %s", job.id[:8], time.monotonic() - started, msg)
+
     try:
+        _stage(f"start: {paper_path.name} lang={language} subject={subject}")
         if not pw_access.check_allowed(google_token):
             raise PermissionError("Not authorized for this app.")
         gemini_client.set_proxy_context(google_token, usage)
@@ -111,7 +124,9 @@ def _run(
         job.message = "Analysing the question paper…"
         # Upload PDFs/images once and reuse for parsing AND for figure questions.
         uploaded = paper_parser.upload_if_multimodal(paper_path)
+        _stage("uploaded; parsing paper (OCR + structure)…")
         paper = paper_parser.parse_paper(paper_path, uploaded=uploaded)
+        _stage(f"parsed: {paper.n_questions} questions / {paper.n_units} units")
         job.title = paper.title
         job.total = paper.n_units
         usage.count = paper.n_units
@@ -120,13 +135,16 @@ def _run(
         # (substituents, subscripts, MCQ structures) instead of guessing. Best-effort:
         # an empty list just means figure questions fall back to the uploaded PDF.
         paper_pages = page_images.render_pages(paper_path)
+        _stage(f"rendered {len(paper_pages)} page image(s)")
         # Routing a figure question to its own page needs per-page text aligned with
         # those images. Prefer the markers already in the transcription; if they're
         # absent or miscounted, re-derive from the images so targeting still works.
         if paper_pages and len(paper.page_texts) != len(paper_pages):
             paper.page_texts = paper_parser.page_texts_from_images(paper_pages)
+            _stage("re-derived per-page text for figure routing")
 
         job.status = "solving"
+        _stage(f"solving {paper.n_units} unit(s)…")
 
         def progress(done: int, total: int, label: str) -> None:
             job.done = done
@@ -147,6 +165,7 @@ def _run(
 
         job.status = "writing"
         job.message = "Building the solution document…"
+        _stage("solved; building the document…")
         base = config.OUTPUT_DIR / f"{_safe_stem(paper_path.name)}_{language}_{job.id[:8]}"
         docx_path, pdf_path = document.build_documents(
             solved, base, include_sources=include_sources
@@ -162,10 +181,17 @@ def _run(
 
         job.status = "done"
         job.message = "Done."
+        _stage("DONE")
     except Exception as exc:  # noqa: BLE001
         job.status = "error"
         job.error = str(exc)
         job.message = "Failed."
+        # Full traceback: this thread's exceptions never surface in the request log,
+        # and job.error keeps only str(exc), which is often uninformative on its own.
+        log.exception(
+            "job %s FAILED after %.1fs during %s: %s",
+            job.id[:8], time.monotonic() - started, job.status, exc,
+        )
     finally:
         gemini_client.clear_proxy_context()
         if job.status in {"done", "error"}:
