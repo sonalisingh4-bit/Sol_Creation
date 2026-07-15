@@ -110,10 +110,13 @@
       </label>
 
       <button type="submit" class="btn primary" id="generate-btn">Generate solution document</button>
-
-      <div id="result"></div>
       </div>
     </form>
+
+    {# Kept OUTSIDE the form and outside #tool-body on purpose: a running job's
+       progress must not vanish when an access re-check briefly hides the tool, and
+       being outside the form stops it inheriting the form's hx-target. #}
+    <div id="result"></div>
   </section>
 </main>
 

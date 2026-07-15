@@ -2,7 +2,10 @@
    once the app is ready — only a thin notice while the one-time first-start
    download of reference material is running (self-polls until it settles). #}
 {% if kb.state in ("downloading", "extracting") %}
-<div id="kb-status" hx-get="/kb/status" hx-trigger="every 3s" hx-swap="outerHTML">
+{# hx-target="this" is REQUIRED: this partial sits inside the form, which declares
+   hx-target="#result". Without it this poll swaps itself onto #result every 3s and
+   destroys the running job's progress. #}
+<div id="kb-status" hx-get="/kb/status" hx-trigger="every 3s" hx-target="this" hx-swap="outerHTML">
   <div class="flash ok">⏳ Preparing reference material for the first time — you can
     already generate; answers will use the books once this finishes.</div>
 </div>
