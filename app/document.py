@@ -496,21 +496,21 @@ def _add_answer(doc: Document, answer: str) -> None:
     _render_text_block(doc, text[pos:])
 
 
-def _heading(doc: Document, number: str, marks, text: str) -> None:
+def _heading(doc: Document, number: str, marks) -> None:
+    """Just the question's number and marks. The question TEXT is deliberately not
+    printed: this document is an answer key, read alongside the paper, not a reprint
+    of it."""
     p = doc.add_paragraph()
     p.space_before = Pt(6)
     label = f"Q{number}" if not number.lower().startswith("q") else number
     if marks is not None:
         label += f"   [{marks} marks]" if marks != 1 else f"   [{marks} mark]"
     _style_run(p.add_run(label), size=13, bold=True, color=_ACCENT)
-    if text:
-        qp = doc.add_paragraph()
-        _add_rich_line(qp, text, size=11, color=_GREY)
-        for r in qp.runs:
-            r.font.italic = True
 
 
 def _subheading(doc: Document, number: str, marks, text: str) -> None:
+    """`text` is READ only to decide whether this part is an "OR" alternative — it is
+    never printed (see _heading)."""
     is_or = "or" in (number or "").lower() or "অথবা" in (text or "")
     if is_or:
         or_p = doc.add_paragraph()
@@ -522,16 +522,6 @@ def _subheading(doc: Document, number: str, marks, text: str) -> None:
     if marks is not None:
         label += f"  [{marks} marks]" if marks != 1 else f"  [{marks} mark]"
     _style_run(p.add_run(label), size=11.5, bold=True)
-    if text:
-        run = p.add_run("  " + text)
-        _style_run(run, size=11, italic=True, color=_GREY)
-
-
-def _sources_line(doc: Document, sources: list[str]) -> None:
-    if not sources:
-        return
-    p = doc.add_paragraph()
-    _style_run(p.add_run("Sources: " + ", ".join(sources)), size=9, italic=True, color=_GREY)
 
 
 def _set_columns(section, count: int, *, space: str = "360") -> None:
@@ -548,8 +538,6 @@ def _set_columns(section, count: int, *, space: str = "360") -> None:
 def build_documents(
     paper: SolvedPaper,
     out_path: str | Path,
-    *,
-    include_sources: bool = True,
 ) -> tuple[Path, Path | None]:
     """Write the .docx, attempt a .pdf, and return (docx_path, pdf_path_or_None)."""
     out_path = Path(out_path)
@@ -582,21 +570,15 @@ def build_documents(
 
     # --- body ---
     for q in paper.questions:
-        _heading(doc, q.number, q.marks, q.text)
+        _heading(doc, q.number, q.marks)
         if q.subparts:
             if q.answer:
                 _add_answer(doc, q.answer)
-                if include_sources:
-                    _sources_line(doc, q.sources)
             for sp in q.subparts:
                 _subheading(doc, sp.number, sp.marks, sp.text)
                 _add_answer(doc, sp.answer)
-                if include_sources:
-                    _sources_line(doc, sp.sources)
         else:
             _add_answer(doc, q.answer or "")
-            if include_sources:
-                _sources_line(doc, q.sources)
         doc.add_paragraph()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

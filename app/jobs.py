@@ -101,7 +101,6 @@ def _run(
     class_level: str,
     subject: str,
     board: str,
-    include_sources: bool,
     google_token: str,
 ) -> None:
     usage = pw_access.UsageSession(
@@ -167,9 +166,7 @@ def _run(
         job.message = "Building the solution document…"
         _stage("solved; building the document…")
         base = config.OUTPUT_DIR / f"{_safe_stem(paper_path.name)}_{language}_{job.id[:8]}"
-        docx_path, pdf_path = document.build_documents(
-            solved, base, include_sources=include_sources
-        )
+        docx_path, pdf_path = document.build_documents(solved, base)
         job.docx_name = docx_path.name
         if pdf_path is not None:
             job.pdf_name = pdf_path.name
@@ -208,7 +205,6 @@ def start_job(
     class_level: str,
     subject: str,
     board: str,
-    include_sources: bool,
     google_token: str,
 ) -> Job:
     job = Job(id=uuid.uuid4().hex)
@@ -223,7 +219,6 @@ def start_job(
             class_level,
             subject,
             board,
-            include_sources,
             google_token,
         ),
         daemon=True,

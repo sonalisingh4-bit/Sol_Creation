@@ -156,7 +156,6 @@ async def generate(
     board: str = Form(""),
     class_level: str = Form(""),
     subject: str = Form("General"),
-    include_sources: str = Form("on"),
     google_token: str = Form(""),
 ):
     name = paper.filename or "paper"
@@ -186,7 +185,7 @@ async def generate(
     if class_level in {"NEET", "JEE"}:
         board = ""
     job = jobs.start_job(
-        saved, language, class_level, subject, board, include_sources == "on", token
+        saved, language, class_level, subject, board, token
     )
     # A successful (whitelisted) generation also (re)establishes the session cookie, so
     # the follow-up status polling and downloads are authenticated automatically.
