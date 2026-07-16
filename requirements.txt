@@ -16,4 +16,5 @@ matplotlib==3.10.3
 schemdraw==0.23
 networkx==3.5
 latex2mathml==3.81.0
+mathml2omml==0.0.2
 lxml==6.1.1

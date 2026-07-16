@@ -2,14 +2,19 @@
 
 The model writes mathematics as LaTeX ($...$ inline, $$...$$ display). Word does
 not read LaTeX, but it *does* read OMML (Office Math Markup Language) — real,
-editable, crisply-rendered equations that also survive the .docx -> .pdf step.
+EDITABLE, crisply-rendered equations that also survive the .docx -> .pdf step.
 
-Pipeline:  LaTeX --latex2mathml--> MathML --(Office's MML2OMML.XSL)--> OMML.
+Pipeline:  LaTeX --latex2mathml--> MathML --> OMML, via either
+  1. Office's own MML2OMML.XSL, when this machine has Word installed, or
+  2. the pure-Python `mathml2omml` package — the path that matters in production.
 
-MML2OMML.XSL is the exact stylesheet Word itself uses; it ships with every
-Microsoft Office install. If it (or latex2mathml) is unavailable, `available()`
-returns False and callers fall back to readable text — the document still builds,
-just without typeset equations.
+Route 2 exists because MML2OMML.XSL ships only with Microsoft Office, so a Linux
+host (Render) has no stylesheet: every equation used to silently fall back to a
+matplotlib PNG, i.e. a picture the faculty could not edit. `mathml2omml` needs no
+Office and no pandoc, so hosted builds now get real editable equations too.
+
+Only if BOTH routes fail does a caller drop to `latex_to_png` (a picture) and then
+to plain text — the document always builds, it just degrades.
 """
 from __future__ import annotations
 
@@ -97,33 +102,82 @@ def _transform() -> etree.XSLT | None:
         return None
 
 
+def _has_mathml2omml() -> bool:
+    try:
+        import mathml2omml  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 @lru_cache(maxsize=1)
 def available() -> bool:
-    """True if LaTeX->OMML rendering is possible on this machine."""
+    """True if LaTeX->OMML (native, editable) rendering is possible here — via either
+    Office's stylesheet or the pure-Python converter."""
     try:
         import latex2mathml.converter  # noqa: F401
     except Exception:  # noqa: BLE001
         return False
-    return _transform() is not None
+    return _transform() is not None or _has_mathml2omml()
+
+
+# mathml2omml emits bare m:/w: prefixes with no xmlns declarations, so lxml cannot
+# parse its output until they are declared on the root element.
+_OMML_NS = (
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+)
+
+
+# mathml2omml 0.0.2 closes <m:groupChrPr> with </m:groupChr> instead of
+# </m:groupChrPr>, so EVERY accent (\vec, \hat, \bar — i.e. most of physics) comes out
+# as malformed XML that lxml rejects, silently demoting the equation to a picture.
+# Repair that one mismatched tag: the first </m:groupChr> after an unclosed
+# <m:groupChrPr> belongs to the Pr element.
+_BAD_GROUPCHRPR = re.compile(r"(<m:groupChrPr>(?:(?!</m:groupChr>).)*?)</m:groupChr>")
+
+
+def _omml_from_mathml(mathml: str) -> bytes | None:
+    """MathML -> OMML using the pure-Python converter (no Office, no pandoc)."""
+    try:
+        import mathml2omml
+
+        omml = mathml2omml.convert(mathml)
+    except Exception:  # noqa: BLE001 - converter missing or rejects the input
+        return None
+    if not omml or "<m:oMath" not in omml:
+        return None
+    omml = _BAD_GROUPCHRPR.sub(r"\1</m:groupChrPr>", omml)
+    if "xmlns:m=" not in omml:
+        omml = omml.replace("<m:oMath>", f"<m:oMath {_OMML_NS}>", 1)
+    try:
+        return etree.tostring(etree.fromstring(omml.encode("utf-8")))
+    except Exception:  # noqa: BLE001 - malformed OMML
+        return None
 
 
 @lru_cache(maxsize=512)
 def _omml_bytes(latex: str) -> bytes | None:
     """Cached LaTeX -> OMML conversion, returned as serialized XML bytes (or None if
-    conversion is unavailable or the LaTeX cannot be parsed). Caching the *bytes*
-    (not a live element) lets the same formula convert once while each caller still
-    gets its own element — see latex_to_omath."""
-    transform = _transform()
-    if transform is None:
-        return None
+    neither route can express it). Caching the *bytes* (not a live element) lets the
+    same formula convert once while each caller still gets its own element — see
+    latex_to_omath."""
     try:
         from latex2mathml.converter import convert
 
         mathml = convert(_fix_abs_bars(latex))
-        omml = transform(etree.fromstring(mathml.encode("utf-8")))
-        return etree.tostring(omml.getroot())
-    except Exception:  # noqa: BLE001 - latex2mathml / XSLT reject some input
+    except Exception:  # noqa: BLE001 - latex2mathml rejects some input
         return None
+    # 1) Office's own stylesheet, when Word is installed on this machine.
+    transform = _transform()
+    if transform is not None:
+        try:
+            omml = transform(etree.fromstring(mathml.encode("utf-8")))
+            return etree.tostring(omml.getroot())
+        except Exception:  # noqa: BLE001 - XSLT rejects some MathML; try route 2
+            pass
+    # 2) Pure-Python route — the one that runs on the Linux host.
+    return _omml_from_mathml(mathml)
 
 
 def latex_to_omath(latex: str):
@@ -156,10 +210,10 @@ def _mathtext_latex(latex: str) -> str:
 def latex_to_png(latex: str) -> bytes | None:
     """Render LaTeX-ish math to a transparent PNG using Matplotlib mathtext.
 
-    Render/hosted Linux machines usually do not have Microsoft Office's
-    MML2OMML.XSL, so native Word equations are unavailable there. Matplotlib's
-    mathtext renderer gives us a dependency-free fallback that still looks like
-    real math in the generated .docx.
+    LAST RESORT ONLY: a picture is not editable, which faculty need it to be. It is
+    reached only when BOTH OMML routes fail for this particular expression (see
+    _omml_bytes). It used to be the normal path on Linux hosts, before the
+    pure-Python mathml2omml route removed the dependency on Office's stylesheet.
     """
     latex = _mathtext_latex(latex)
     if not latex:
