@@ -26,7 +26,8 @@ from . import chem_render, optics_render, physics_render
 # [[FIG ...]] opener or at end-of-text. The explicit [[/FIG]] terminator still
 # keeps JSON bodies (which contain ']' and even ']]') safe when it is present.
 DIRECTIVE_RE = re.compile(
-    r"\[\[\s*FIG\s+(MOL|RXN|PLOT|CIRCUIT|FLOW|DIAGRAM|OPTICS|FBD|IMG|PAPER|MAGNET|EYE)\s*\]\]"  # opener
+    r"\[\[\s*FIG\s+(MOL|RXN|PLOT|CIRCUIT|FLOW|DIAGRAM|OPTICS|FBD|IMG|PAPER|MAGNET|EYE"
+    r"|EMWAVE|FIELDLINES|PHASOR|PRISM|MICROSCOPE|TELESCOPE)\s*\]\]"  # opener
     r"\s*(.*?)\s*"                                              # body (lazy)
     r"(?:\[\[\s*/\s*FIG\s*\]\]|(?=\[\[\s*FIG\b)|\Z)",           # close | next opener | end
     re.IGNORECASE | re.DOTALL,
@@ -37,6 +38,8 @@ WIDTH = {
     "MOL": 2.6, "RXN": 4.8, "PLOT": 5.0,
     "CIRCUIT": 4.2, "FLOW": 5.3, "DIAGRAM": 4.6, "OPTICS": 5.2,
     "FBD": 3.6, "IMG": 4.8, "MAGNET": 4.8, "EYE": 5.4,
+    "EMWAVE": 5.6, "FIELDLINES": 4.2, "PHASOR": 4.2, "PRISM": 4.8,
+    "MICROSCOPE": 5.8, "TELESCOPE": 5.6,
 }
 
 try:
@@ -399,6 +402,18 @@ def render_match(match: "re.Match") -> tuple[bytes | None, str, str]:
                 png = physics_render.magnet(spec)
             elif kind == "EYE":
                 png = physics_render.eye(spec)
+            elif kind == "EMWAVE":
+                png = physics_render.em_wave(spec)
+            elif kind == "FIELDLINES":
+                png = physics_render.field_lines(spec)
+            elif kind == "PHASOR":
+                png = physics_render.phasor(spec)
+            elif kind == "PRISM":
+                png = physics_render.prism(spec)
+            elif kind == "MICROSCOPE":
+                png = physics_render.microscope(spec)
+            elif kind == "TELESCOPE":
+                png = physics_render.telescope(spec)
         except Exception:  # noqa: BLE001 - never let a bad figure crash generation
             png = None
     # On failure keep only a real caption. A generic "(diagram figure)" placeholder

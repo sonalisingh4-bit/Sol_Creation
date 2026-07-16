@@ -175,6 +175,24 @@ Supported TYPE and body:
 - EYE — a human-eye ray diagram for a vision defect and its correction. Body: JSON
     {"defect":"normal|myopia|hypermetropia","corrected":true,"caption":".."}
     Draws the eye lens, retina and the focused rays: myopia focuses in FRONT of the retina (corrected with a concave lens), hypermetropia BEHIND it (corrected with a convex lens). Set "corrected" to true to also draw the correcting lens. Use EYE for eye-defect questions.
+- MICROSCOPE — the compound-microscope ray diagram (objective + eyepiece, object AB, real inverted A'B', virtual magnified A''B'', foci labelled). Body: JSON
+    {"caption":".."}
+    Use MICROSCOPE for "draw a ray diagram showing image formation by a compound microscope".
+- TELESCOPE — the reflecting (Cassegrain) telescope ray diagram: parallel rays -> concave primary -> convex secondary -> through the hole -> eyepiece. Body: JSON
+    {"caption":".."}
+    Use TELESCOPE for "draw a ray diagram of a reflecting telescope".
+- EMWAVE — an electromagnetic wave travelling along X, with the oscillating E (along Y) and B (along Z) drawn mutually perpendicular and labelled. Body: JSON
+    {"caption":".."}
+    Use EMWAVE for "draw a diagram showing the propagation of an electromagnetic wave".
+- FIELDLINES — a point charge with its radial electric field lines AND concentric equipotential surfaces. Body: JSON
+    {"charge":"negative|positive","caption":".."}
+    Lines point inward for a negative charge, outward for a positive one. Use FIELDLINES for "draw the equipotential surfaces and field lines of a point charge".
+- PHASOR — the phasor diagram of a series L-C-R circuit (V_R along the current, V_L up, V_C down, resultant V and the angle phi). Body: JSON
+    {"vr":3,"vl":4,"vc":1,"caption":".."}
+    Give any consistent relative magnitudes. Use PHASOR for L-C-R phasor questions.
+- PRISM — refraction of a ray through a prism at minimum deviation, with A, i1, r1, r2, i2, the normals and the deviation marked. Body: JSON
+    {"angle":60,"caption":".."}
+    Use PRISM for prism/minimum-deviation questions.
 - PAPER — REUSE a figure that is already printed in the question paper (a given circuit, graph, map, data table or labelled diagram) rather than redrawing it. Body: JSON
     {"page":2,"bbox":[left,top,right,bottom],"caption":".."}
     page is the 1-based page of the paper; bbox locates the figure as fractions of that page (0 = left/top, 1 = right/bottom). Use PAPER ONLY when the paper actually SHOWS the figure and you can see it on the attached page image, and box just that figure (a little margin is fine). When the answer needs a NEW figure the paper does not contain (e.g. a ray diagram you must draw), use OPTICS/FBD/MAGNET/EYE/DIAGRAM instead — never PAPER.
@@ -183,13 +201,16 @@ Supported TYPE and body:
     Use x1,y1,x2,y2 for line/arrow; cx,cy,r for circle; x,y,w,h for rect; x,y(+label) for point; x,y,text for label.
 
 Rules for figures:
+- YOU CAN DRAW. Emitting a [[FIG ...]] block produces a REAL, rendered image in the finished document. NEVER claim you cannot draw or create an image, and NEVER hand the drawing back to the reader. Sentences like "Since I cannot draw an image directly...", "যেহেতু আমি ছবি আঁকতে পারি না", "Drawing Instructions", "Graph Plotting Instructions", "Steps to Draw the Diagram", "draw it in your notebook", or "see the diagram in your textbook" are FORBIDDEN — they score ZERO for the diagram. Emit the figure itself instead.
+- If the question says draw / sketch / plot / trace / "show diagrammatically" / "draw a ray diagram" / "draw the graph" / "draw the circuit", you MUST emit a [[FIG ...]] block. Choose the closest TYPE and commit to real values. A correctly-labelled figure always beats prose describing one; prose describing a figure earns nothing.
+- For a GRAPH question (a characteristic curve, "variation of X with Y", an intensity distribution), use PLOT and supply representative numeric x/y data with the CORRECT SHAPE, computed from the physics — e.g. Kmax = hv - phi0 is a straight line starting at v0; a reverse-bias V-I curve is flat then drops at breakdown. A qualitative graph still needs real numbers to render.
 - A figure only SUPPLEMENTS the written answer; it NEVER replaces it. Always write the COMPLETE answer in plain text — every definition, step, equation and the FINAL result — so the answer stands on its own even if the figure is removed. Never end an answer on a figure, and never leave the result to be "read off" a diagram (e.g. still write "so i = tan⁻¹(μ₂/μ₁)" or "so the structure of D is 4-hydroxybenzyl chloride" in words). A drawn figure is in addition to that written conclusion, not instead of it.
 - A bare SMILES, formula or caption on its own line does NOT become a figure — you MUST wrap it in the [[FIG TYPE]] ... [[/FIG]] tags exactly as shown, or it will appear as raw text. Never write a SMILES string or a figure caption on its own without the tags.
 - Give correct numbers, structures and connectivity — these render EXACTLY as specified.
 - Keep labels inside figures short and in Latin script/symbols/numbers (axis names, R1, t, [R], A, B) even when the rest of the answer is in another language, so they render cleanly.
 - LABEL every part a textbook diagram would label — a bare or half-labelled figure loses marks. Mark the object/image and rays, normal and angles on an optics diagram; each component and its value on a circuit; every force and its direction on a free-body diagram; each named part on apparatus or a biology sketch; the axes and key points on a graph. Prefer a correctly and fully labelled figure over an elaborate but unlabelled one.
 - Use a figure only when the question actually calls for one; plain text needs no figure.
-- For a figure that none of the TYPEs above can express (e.g. a realistic lab-apparatus sketch), briefly describe it in words instead — do not attempt to draw it.'''
+- ONLY if no TYPE above can express the figure at all (e.g. a photo-realistic lab-apparatus sketch) may you describe it — and then in ONE short sentence inside the answer, never as a numbered "how to draw it" procedure and never as a note addressed to the reader. If a rough version is expressible with DIAGRAM, draw that instead of describing it.'''
 
 
 # Every mathematical expression must be LaTeX so the document renders it as a real,
