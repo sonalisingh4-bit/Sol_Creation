@@ -4,10 +4,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from pypdf import PdfReader
 
 from . import config, extract, gemini_client, page_images
+
+ParserProgressFn = Callable[[str, int | None], None]
+
+
+def _notify(
+    progress: ParserProgressFn | None,
+    detail: str,
+    percent: int | None = None,
+) -> None:
+    if progress is not None:
+        progress(detail, percent)
+
 
 # Pass 1 (OCR) delimits each page with its own marker line, but the exact wording
 # drifts run to run — we've seen "**Page 1**", "=== PAGE 1 ===" and Gemini's native
@@ -278,12 +291,21 @@ def _page_batches(pngs: list[bytes]):
         yield start, batch
 
 
-def _ocr_attachments(attachments: list, instruction: str = _OCR_INSTRUCTION) -> str:
+def _ocr_attachments(
+    attachments: list,
+    instruction: str = _OCR_INSTRUCTION,
+    *,
+    progress: ParserProgressFn | None = None,
+    detail: str = "Running OCR.",
+    percent: int | None = None,
+) -> str:
     """Transcribe one request's worth of attachments. Retries a few times because the
     model occasionally returns an empty response on a dense scan — a real transcription
     is far longer than a handful of characters."""
     text = ""
-    for _ in range(3):
+    for attempt in range(3):
+        suffix = "" if attempt == 0 else f" Retry {attempt + 1}."
+        _notify(progress, detail + suffix, percent)
         text = gemini_client.generate_text(
             instruction,
             model=config.GEMINI_GEN_MODEL,  # the stronger model transcribes most completely
@@ -297,7 +319,12 @@ def _ocr_attachments(attachments: list, instruction: str = _OCR_INSTRUCTION) -> 
     return text
 
 
-def _ocr_paper(uploaded, path) -> str:
+def _ocr_paper(
+    uploaded,
+    path,
+    *,
+    progress: ParserProgressFn | None = None,
+) -> str:
     """Pass 1 — transcribe the whole paper to plain text (reliable on dense scans).
 
     Send rendered page images (never the whole PDF inline — a scanned PDF can blow past
@@ -307,26 +334,52 @@ def _ocr_paper(uploaded, path) -> str:
     quality is preserved. Each batch is told its real page numbers so the "=== Page N ==="
     markers stay correct for figure routing. Falls back to a single whole-file request
     only when page rendering is unavailable."""
+    _notify(progress, "Rendering paper pages for OCR.", 24)
     pngs = page_images.render_pages(path)
     if not pngs:
-        return _ocr_attachment_fallback(uploaded)
+        return _ocr_attachment_fallback(uploaded, progress=progress)
+    _notify(progress, f"Rendered {len(pngs)} page(s) for OCR.", 27)
     chunks = []
-    for start, batch in _page_batches(pngs):
+    batches = list(_page_batches(pngs))
+    for index, (start, batch) in enumerate(batches, start=1):
         parts = [gemini_client.image_part(p, mime_type=page_images.MIME) for p in batch]
         last = start + len(batch) - 1
+        if start == last:
+            detail = f"Reading page {start} with OCR."
+        else:
+            detail = f"Reading pages {start}-{last} with OCR."
+        percent = 28 + int(index / max(len(batches), 1) * 10)
         instruction = (
             f"{_OCR_INSTRUCTION}\n\nThese {len(batch)} images are pages {start} to {last} "
             f"of the paper, in order (the first image is page {start}). Begin each page's "
             f"transcription with a line '=== Page N ===' using its REAL page number from "
             "that range."
         )
-        chunks.append(_ocr_attachments(parts, instruction))
+        chunks.append(
+            _ocr_attachments(
+                parts,
+                instruction,
+                progress=progress,
+                detail=detail,
+                percent=percent,
+            )
+        )
+    _notify(progress, "Combining OCR text from all pages.", 39)
     return "\n\n".join(chunks)
 
 
-def _ocr_attachment_fallback(uploaded) -> str:
+def _ocr_attachment_fallback(
+    uploaded,
+    *,
+    progress: ParserProgressFn | None = None,
+) -> str:
     """Whole-file transcription, used only when page rendering is unavailable."""
-    return _ocr_attachments([uploaded])
+    return _ocr_attachments(
+        [uploaded],
+        progress=progress,
+        detail="Reading the uploaded file with OCR.",
+        percent=32,
+    )
 
 
 def _embedded_pdf_text(path: Path) -> str:
@@ -357,30 +410,48 @@ def _embedded_pdf_text(path: Path) -> str:
     return joined if len(joined) >= 200 * n_pages else ""
 
 
-def parse_paper(path: str | Path, *, uploaded=None) -> ParsedPaper:
+def parse_paper(
+    path: str | Path,
+    *,
+    uploaded=None,
+    progress: ParserProgressFn | None = None,
+) -> ParsedPaper:
     path = Path(path)
     ext = path.suffix.lower()
 
     multimodal = ext in extract.PDF_EXTS | extract.IMAGE_EXTS
+    _notify(progress, "Checking the uploaded paper type.", 18)
     if multimodal:
         if uploaded is None:
+            _notify(progress, "Uploading paper for visual reading.", 20)
             uploaded = gemini_client.upload_file(path)
-        paper_text = _embedded_pdf_text(path) or _ocr_paper(uploaded, path)
+        _notify(progress, "Checking for selectable PDF text.", 22)
+        embedded_text = _embedded_pdf_text(path)
+        if embedded_text:
+            _notify(progress, "Using selectable text from the PDF.", 35)
+            paper_text = embedded_text
+        else:
+            _notify(progress, "No selectable text found; starting OCR.", 23)
+            paper_text = _ocr_paper(uploaded, path, progress=progress)
     else:
+        _notify(progress, "Extracting text from the uploaded document.", 30)
         paper_text = extract.extract_text(path)
 
-    def _structure_text(model: str) -> ParsedPaper:
+    def _structure_text(model: str, detail: str, percent: int) -> ParsedPaper:
+        _notify(progress, detail, percent)
         contents = f"{_INSTRUCTION}\n\n=== QUESTION PAPER (verbatim transcription) ===\n{paper_text}"
         data = gemini_client.generate_json(contents, model=model, system=_SYSTEM)
         return _build(data if isinstance(data, dict) else {})
 
-    def _structure_images(model: str) -> ParsedPaper:
+    def _structure_images(model: str, detail: str, percent: int) -> ParsedPaper:
         """Structure straight from the page images (high-res, else the uploaded file).
         The text pass reliably STRUCTURES but sometimes leaves figure-heavy sub-parts
         with empty text; reading the actual page recovers that text — and it also
         covers a transcription that came back empty."""
+        _notify(progress, detail, percent)
         atts = None
         if multimodal:
+            _notify(progress, "Rendering pages for image-based structure recovery.", percent)
             pngs = page_images.render_pages(path)
             if pngs:
                 atts = [gemini_client.image_part(p, mime_type=page_images.MIME) for p in pngs]
@@ -404,14 +475,25 @@ def parse_paper(path: str | Path, *, uploaded=None) -> ParsedPaper:
     # only produces hallucinations.
     paper = ParsedPaper(title=None, total_marks=None, questions=[])
     try:
-        paper = _structure_text(config.GEMINI_PARSE_MODEL)
+        paper = _structure_text(
+            config.GEMINI_PARSE_MODEL,
+            "Extracting question numbers, marks, and sub-parts.",
+            42,
+        )
     except gemini_client.GeminiJSONError:
         # A dense paper can make the model truncate or leave a string open. Treat
         # that as a parse attempt failure and continue to the stronger/image pass.
+        _notify(progress, "Question structure was incomplete; retrying.", 44)
         pass
     if _missing_text(paper) >= 1 or not paper.questions:
         try:
-            _better(_structure_text(config.GEMINI_GEN_MODEL))
+            _better(
+                _structure_text(
+                    config.GEMINI_GEN_MODEL,
+                    "Retrying question structure with the stronger model.",
+                    45,
+                )
+            )
         except Exception:  # noqa: BLE001 - keep the best parse so far
             pass
 
@@ -420,7 +502,13 @@ def parse_paper(path: str | Path, *, uploaded=None) -> ParsedPaper:
     # images and keep whichever structuring recovered the most text.
     if multimodal and (not paper.questions or _missing_text(paper) >= 1):
         try:
-            _better(_structure_images(config.GEMINI_GEN_MODEL))
+            _better(
+                _structure_images(
+                    config.GEMINI_GEN_MODEL,
+                    "Recovering figure-heavy questions from page images.",
+                    47,
+                )
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -432,4 +520,9 @@ def parse_paper(path: str | Path, *, uploaded=None) -> ParsedPaper:
         )
     if multimodal:
         paper.page_texts = _split_pages(paper_text)
+    _notify(
+        progress,
+        f"Parsed {paper.n_questions} questions / {paper.n_units} answer units.",
+        49,
+    )
     return paper

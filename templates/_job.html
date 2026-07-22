@@ -17,8 +17,21 @@
     </div>
     {% if job.pdf_note %}<p class="muted small">ℹ️ {{ job.pdf_note }}</p>{% endif %}
   {% else %}
-    <div class="job-msg"><span class="spinner"></span> {{ job.message }}</div>
+    <div class="job-head">
+      <div class="job-msg" aria-live="polite"><span class="spinner"></span> {{ job.message }}</div>
+      <div class="job-percent">{{ job.percent }}%</div>
+    </div>
     <div class="progress"><div class="bar" style="width: {{ job.percent }}%"></div></div>
-    <div class="muted small">{{ job.percent }}%</div>
+    <ol class="job-steps" aria-label="Generation steps">
+      {% for step in job.steps %}
+      <li class="job-step {{ step.state }}">
+        <span class="step-dot" aria-hidden="true"></span>
+        <span class="step-copy">
+          <span class="step-label">{{ step.label }}</span>
+          {% if step.detail %}<span class="step-detail">{{ step.detail }}</span>{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ol>
   {% endif %}
 </div>
