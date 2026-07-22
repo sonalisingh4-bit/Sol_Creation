@@ -232,6 +232,20 @@ _MATH_INSTRUCTIONS = r'''MATHEMATICS — write ALL mathematics as LaTeX:
 - Chemical formulae and reaction equations are NOT LaTeX maths: write them as plain text (H₂SO₄, CH₃COOH, 2KMnO₄ → ...) or as a [[FIG RXN]] figure, never inside $...$.'''
 
 
+# The textbook prints certain answers as a GRID, and an examiner expects a grid back.
+# The document builder already turns a markdown table into a real bordered Word table
+# (cells go through the same rich renderer, so $...$ becomes a native equation), but
+# nothing ever ASKED the model for one — so truth tables came back flattened into
+# prose bullets ("The four rows give: p = T, q = T: ...").
+_TABLE_INSTRUCTIONS = r'''TABLES — when the standard textbook answer IS a table, write a real table:
+- Use a GitHub-style markdown table: a header row, then a separator row of "| :--- |" cells, then one row per line. It is converted into a real Word table with borders.
+- Use one WHENEVER the expected answer is tabular: a truth table, a comparison ("differences between X and Y", "distinguish between"), tabulated observations or data, or a classification.
+- NEVER flatten a table into prose or bullet points. Writing "The four rows give: p = T, q = T: ..." where the textbook prints a grid is a defect, not a style choice.
+- TRUTH TABLES: give one column per simple statement, one column per intermediate expression the proof needs, and one column for each side being compared — the same columns the textbook shows. List EVERY combination of truth values, one per row (2 statements → 4 rows, 3 → 8). Below the table, state in one line which columns are identical and the conclusion that follows.
+- Keep cells short. Maths inside a cell still uses $...$ (e.g. $\sim(p \vee q)$, $\sim p \wedge \sim q$); keep prose outside the delimiters.
+- Do not leave a blank line inside a table, and never wrap a table in backticks.'''
+
+
 # Subjects whose answers are quantitative and need typeset equations (LaTeX). Other
 # subjects (Biology, General) are prose/point-wise and skip the maths instructions.
 # Combined Science includes physics/chemistry numericals, so it needs them too.
@@ -557,6 +571,9 @@ def _build_prompt(
     # answers are prose/point-wise and would only be cluttered by them.
     if (subject or "General") in _QUANTITATIVE:
         parts.append(_MATH_INSTRUCTIONS)
+    # Every subject can need a table — truth tables in Maths, comparison tables in
+    # Biology/Science, "distinguish between" in Social Science — so this is not gated.
+    parts.append(_TABLE_INSTRUCTIONS)
     return "\n\n".join(parts)
 
 

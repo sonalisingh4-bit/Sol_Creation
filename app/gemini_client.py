@@ -18,6 +18,12 @@ import pw_access
 from . import config
 
 _MAX_RETRIES = 4
+# A 429 from the proxy is normally a Google *per-minute* quota (the proxy reads a
+# Sheet on every call, so heavy papers — and other PW apps sharing the project —
+# exhaust "Read requests per minute"). That only clears when the minute window rolls
+# over, so a 1-2-4s exponential backoff gives up ~8x too early and kills a job that
+# would have finished. Quota errors wait out a whole window instead.
+_QUOTA_BACKOFF = (20, 45, 75)
 _TOKEN_RE = re.compile(r"[^\W\d_]{2,}|\d+", re.UNICODE)
 _CTX = threading.local()
 
@@ -78,7 +84,12 @@ def _retry(fn, *args, **kwargs):
             if not transient or attempt == _MAX_RETRIES - 1:
                 raise
             last_exc = exc
-            time.sleep(2 ** attempt)
+            quota = "429" in msg or "quota" in msg or "rate limit" in msg
+            time.sleep(
+                _QUOTA_BACKOFF[min(attempt, len(_QUOTA_BACKOFF) - 1)]
+                if quota
+                else 2 ** attempt
+            )
     if last_exc:
         raise last_exc
 
